@@ -274,6 +274,7 @@ async def main():
         else:
             print("無法處理此請求。")
 
+# 這一段只用來 CLI 測試，不要在 FastAPI 用到
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
