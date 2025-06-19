@@ -8,7 +8,7 @@ import re
 import emoji
 from datetime import datetime, timedelta
 import google.generativeai as genai
-import edge_tts  # 新增 Edge-TTS 套件
+import edge_tts  
 from emotion_module import detect_text_emotion, detect_audio_emotion
 
 # 初始化 Gemini Flash 模型
@@ -83,6 +83,43 @@ def save_emotion_log(text_emotion, audio_emotion):
     records.append(log)
     save_json(EMOTION_LOG_FILE, records)
 
+def handle_item_input(text):
+    """
+    從文字中提取物品資訊並記錄到 JSON 檔案。
+    """
+    prompt = f"""請從下面這句話中擷取出下列資訊，用 JSON 格式回覆：
+    - item：物品名稱
+    - location：放置位置
+    - owner：誰的（如果沒提到就填「我」）
+    句子：「{text}」"""
+
+    reply = safe_generate(prompt)
+
+    if not reply:
+        print("Gemini 沒有回應，請稍後再試。")
+        return
+
+    if reply.startswith("```"):
+        reply = reply.strip("`").replace("json", "").strip()
+
+    try:
+        data = json.loads(reply)
+    except:
+        print(f"回傳格式錯誤，無法解析：{reply}")
+        return
+
+    records = load_json(ITEMS_FILE)
+    data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    records.append(data)
+    save_json(ITEMS_FILE, records)
+
+    print(f"已記錄：{data['owner']}的「{data['item']}」放在 {data['location']}")
+
+def parse_relative_time(text):
+    # 這個函式負責解析相對時間，例如「明天」、「後天」等，並回傳對應的絕對時間字串
+    # 實作細節省略
+    pass
+
 # ─────── 播放語音功能 ───────
 async def play_response(response_text):
     try:
@@ -155,6 +192,45 @@ async def chat_with_emotion(text, audio_path):
         "text_emotion": text_emotion,
         "audio_emotion": audio_emotion
     }
+
+def handle_schedule_input(text):
+    """
+    從文字中提取時程資訊並記錄到 JSON 檔案。
+    """
+    relative_time = parse_relative_time(text)
+    prompt = f"""
+請從下列句子中擷取資訊並以 JSON 格式回覆，欄位名稱請使用英文（task, location, place, time, person）：
+- task：任務（例如 去吃飯）
+- location：具體地點（例如 台北車站）
+- place：地點分類（例如 餐廳）
+- time：請使用 24 小時制 YYYY-MM-DD HH:mm 格式
+- person：誰的行程（沒提到就填「我」）
+如果句子中包含相對時間（如：明天、後天、大後天等），請使用以下時間：
+{relative_time if relative_time else "請根據句子中的時間描述來設定"}
+請只回傳 JSON，不要加說明或換行。
+句子：「{text}」
+"""
+    reply = safe_generate(prompt)
+
+    if not reply:
+        print("Gemini 沒有回應，請稍後再試。")
+        return
+
+    if reply.startswith("```"):
+        reply = reply.strip("`").replace("json", "").strip()
+
+    try:
+        data = json.loads(reply)
+    except:
+        print(f"回傳格式錯誤，無法解析：{reply}")
+        return
+
+    schedules = load_json(SCHEDULE_FILE)
+    data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    schedules.append(data)
+    save_json(SCHEDULE_FILE, schedules)
+
+    print(f"已安排：{data.get('person', '我')} 在 {data.get('time', '未指定時間')} 要「{data.get('task', '未知任務')}」@{data.get('location', '未知地點')}（{data.get('place', '')}）")
 
 # ─────── 主程式 ───────
 async def main():
