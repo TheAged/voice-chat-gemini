@@ -4,8 +4,8 @@ import time
 
 # 支援多組 Gemini API 金鑰，遇到限流自動切換
 API_KEYS = [
-    "AIzaSyBwbqy85wGVIN2idVvAmkL9ecnqwo-bDdc",  # 第一組金鑰
-    "AIzaSyDe3_1y4N8oL8pe60xpoTOOBoqR4x3fkLM"   # 第二組金鑰
+    "第一組金鑰",  # 第一組金鑰
+    "第二組金鑰"   # 第二組金鑰
 ]
 _api_idx = 0
 
