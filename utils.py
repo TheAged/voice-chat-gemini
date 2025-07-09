@@ -1,23 +1,33 @@
 import google.generativeai as genai
 import time
 
-# 請將這裡的 API 金鑰換成你的金鑰
-API_KEY = "AIzaSyBwbqy85wGVIN2idVvAmkL9ecnqwo-bDdc"
-genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel("gemini-2.0-flash")
+
+# 支援多組 Gemini API 金鑰，遇到限流自動切換
+API_KEYS = [
+    "AIzaSyBwbqy85wGVIN2idVvAmkL9ecnqwo-bDdc",  # 第一組金鑰
+    "AIzaSyDe3_1y4N8oL8pe60xpoTOOBoqR4x3fkLM"   # 第二組金鑰
+]
+_api_idx = 0
+
+def get_model():
+    genai.configure(api_key=API_KEYS[_api_idx])
+    return genai.GenerativeModel("gemini-2.0-flash")
+
+model = get_model()
 
 def safe_generate(prompt):
-    try:
-        return model.generate_content(prompt).text.strip()
-    except Exception as e:
-        if "429" in str(e):
-            print("達到API限制，等待60秒後重試...")
-            time.sleep(60)
-            try:
-                return model.generate_content(prompt).text.strip()
-            except Exception as e2:
-                print("再次失敗：", e2)
+    global _api_idx, model
+    for attempt in range(len(API_KEYS)):
+        try:
+            return model.generate_content(prompt).text.strip()
+        except Exception as e:
+            if "429" in str(e):
+                print(f"API KEY {_api_idx+1} 達到限流，切換下一組金鑰...")
+                _api_idx = (_api_idx + 1) % len(API_KEYS)
+                model = get_model()
+                continue
+            else:
+                print("呼叫錯誤：", e)
                 return None
-        else:
-            print("呼叫錯誤：", e)
-            return None
+    print("所有 API 金鑰都被限流，請稍後再試。")
+    return None
