@@ -140,12 +140,14 @@ items.json
 schedules.json
 weekly_emotion_stats.json
 
-# 但保留範例檔案
+# 但保留重要檔案
 !requirements.txt
 !package.json
 !.env.example
 !*example*.json
 !*sample*.json
+!start_linux.sh
+!LINUX_INSTALL.md
 
 # ==============================================================================
 # 日誌檔案

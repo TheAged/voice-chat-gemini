@@ -237,6 +237,46 @@ pyttsx3            # 備用語音引擎
 
 ---
 
+## 🖥️ 跨平台支援
+
+### Windows 系統
+- Python 3.8+
+- Windows 10/11（內建語音合成支援）
+- 網路連線（Edge TTS 和 Gemini API）
+
+### Linux 系統
+- Python 3.8+
+- 音頻系統：ALSA 或 PulseAudio
+- **音頻播放器**（選擇其一）:
+  ```bash
+  # Ubuntu/Debian
+  sudo apt install mpg123 ffmpeg
+  
+  # CentOS/RHEL
+  sudo yum install mpg123 ffmpeg
+  
+  # Arch Linux
+  sudo pacman -S mpg123 ffmpeg
+  ```
+- **語音合成工具**（可選，提升體驗）:
+  ```bash
+  # Ubuntu/Debian
+  sudo apt install espeak espeak-data-zh
+  
+  # CentOS/RHEL
+  sudo yum install espeak
+  
+  # Arch Linux
+  sudo pacman -S espeak-ng
+  ```
+
+### macOS 系統
+- Python 3.8+
+- macOS 10.14+（內建語音合成支援）
+- 網路連線（Edge TTS 和 Gemini API）
+
+---
+
 ##  進階功能
 
 ###  情緒數據可視化

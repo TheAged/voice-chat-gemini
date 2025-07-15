@@ -17,8 +17,8 @@ python-dotenv>=1.0.0
 opencv-python>=4.7.0
 fer>=22.5.1
 
-# 語音合成備用方案 (Windows 環境)
-pyttsx3>=2.90
+# 跨平台語音合成 (條件安裝)
+pyttsx3>=2.90; platform_system=="Windows"
 
 # 數據處理和分析
 numpy>=1.24.0

@@ -14,9 +14,19 @@ from emotion_module import detect_text_emotion, detect_audio_emotion, record_dai
 from emotion_config import get_current_config, CURRENT_MODE
 import threading
 import asyncio
-import winsound  # Windows 系統音效
 import os
+import platform
 from dotenv import load_dotenv
+
+# 跨平台音效導入
+try:
+    if platform.system() == "Windows":
+        import winsound
+    else:
+        # Linux 音效替代方案
+        winsound = None
+except ImportError:
+    winsound = None
 
 # 載入環境變數
 load_dotenv()
@@ -641,11 +651,8 @@ def execute_reminder(schedule_item):
     task = schedule_item.get('task', '未知任務')
     person = schedule_item.get('person', '你')
     
-    # 播放系統提示音
-    try:
-        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-    except:
-        pass
+    # 跨平台系統提示音
+    play_system_beep()
     
     # 根據任務類型生成合適的提醒文字
     if "吃藥" in task:
@@ -669,6 +676,24 @@ def execute_reminder(schedule_item):
     # 語音提醒（異步執行）
     asyncio.run(play_reminder_voice(reminder_text))
 
+def play_system_beep():
+    """跨平台系統提示音"""
+    try:
+        if platform.system() == "Windows" and winsound:
+            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+        elif platform.system() == "Linux":
+            # Linux 使用 ALSA 或 PulseAudio
+            os.system("paplay /usr/share/sounds/alsa/Front_Left.wav 2>/dev/null || echo -e '\\a'")
+        elif platform.system() == "Darwin":  # macOS
+            os.system("afplay /System/Library/Sounds/Glass.aiff 2>/dev/null || echo -e '\\a'")
+        else:
+            # 通用方案：終端響鈴
+            print("\a", end="")
+    except Exception as e:
+        print(f"系統提示音播放失敗：{e}")
+        # 最後備用方案：終端響鈴
+        print("\a", end="")
+
 async def play_reminder_voice(text):
     """播放提醒語音"""
     # 清理文字以供語音合成
@@ -681,36 +706,83 @@ async def play_reminder_voice(text):
         tts = edge_tts.Communicate(clean_speech_text, TTS_VOICE)
         # 使用 asyncio.wait_for 設定 10 秒超時
         await asyncio.wait_for(tts.save("reminder_audio.mp3"), timeout=10.0)
-        import os
-        os.system("start reminder_audio.mp3")
+        
+        # 跨平台音頻播放
+        play_audio_file("reminder_audio.mp3")
         print("Edge-TTS 提醒語音播放成功")
+        
     except (Exception, asyncio.TimeoutError) as e:
         print(f"Edge-TTS 提醒失敗（網路問題或服務不可用）：{e}")
-        # 備用方案：使用 Windows 內建的 SAPI 語音
+        
+        # 備用方案：使用系統語音合成
         try:
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.setProperty('rate', 150)
-            engine.setProperty('volume', 0.9)
-            # 嘗試設定中文語音
-            voices = engine.getProperty('voices')
-            for voice in voices:
-                if 'chinese' in voice.name.lower() or 'zh' in voice.id.lower() or 'mandarin' in voice.name.lower():
-                    engine.setProperty('voice', voice.id)
-                    break
-            engine.say(clean_speech_text)
-            engine.runAndWait()
-            print("使用 Windows 內建語音播放提醒")
+            play_system_voice(clean_speech_text)
+            print("使用系統語音播放提醒")
         except Exception as backup_error:
-            print(f"Windows 語音系統也失敗：{backup_error}")
-            # 最後備用方案：只顯示文字和系統提示音
+            print(f"系統語音也失敗：{backup_error}")
+            # 最後備用方案：多重提示音
+            for _ in range(3):
+                play_system_beep()
+                await asyncio.sleep(0.5)
+            print("語音提醒失敗，使用多重提示音")
+
+def play_audio_file(filename):
+    """跨平台音頻檔案播放"""
+    try:
+        if platform.system() == "Windows":
+            os.system(f"start {filename}")
+        elif platform.system() == "Linux":
+            # Linux 使用多種播放器嘗試
+            players = ["mpg123", "ffplay", "aplay", "paplay"]
+            for player in players:
+                if os.system(f"which {player} >/dev/null 2>&1") == 0:
+                    os.system(f"{player} {filename} >/dev/null 2>&1 &")
+                    break
+            else:
+                print("未找到音頻播放器，請安裝 mpg123 或 ffmpeg")
+        elif platform.system() == "Darwin":  # macOS
+            os.system(f"afplay {filename}")
+    except Exception as e:
+        print(f"音頻播放失敗：{e}")
+
+def play_system_voice(text):
+    """跨平台系統語音合成"""
+    try:
+        if platform.system() == "Windows":
+            # Windows SAPI
             try:
-                import winsound
-                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)  # 雙重提示音
-                print(" 語音提醒失敗，使用系統提示音")
-            except:
-                print(" 只顯示文字提醒，無法播放音效")
+                import pyttsx3
+                engine = pyttsx3.init()
+                engine.setProperty('rate', 150)
+                engine.setProperty('volume', 0.9)
+                # 嘗試設定中文語音
+                voices = engine.getProperty('voices')
+                for voice in voices:
+                    if 'chinese' in voice.name.lower() or 'zh' in voice.id.lower() or 'mandarin' in voice.name.lower():
+                        engine.setProperty('voice', voice.id)
+                        break
+                engine.say(text)
+                engine.runAndWait()
+            except ImportError:
+                print("pyttsx3 未安裝，無法使用 Windows 語音")
+                raise
+                
+        elif platform.system() == "Linux":
+            # Linux 使用 espeak 或 festival
+            if os.system("which espeak >/dev/null 2>&1") == 0:
+                os.system(f"espeak -v zh '{text}' 2>/dev/null || espeak '{text}' 2>/dev/null")
+            elif os.system("which festival >/dev/null 2>&1") == 0:
+                os.system(f"echo '{text}' | festival --tts 2>/dev/null")
+            else:
+                print("未找到語音合成工具，請安裝 espeak 或 festival")
+                raise Exception("No TTS engine found")
+                
+        elif platform.system() == "Darwin":  # macOS
+            os.system(f"say '{text}'")
+            
+    except Exception as e:
+        print(f"系統語音合成失敗：{e}")
+        raise
 
 # ─────── 播放語音功能 ───────
 async def play_response(response_text):
@@ -729,13 +801,13 @@ async def play_response(response_text):
             tts = edge_tts.Communicate(clean_speech_text, TTS_VOICE)
             # 設定 10 秒超時
             await asyncio.wait_for(tts.save("response_audio.mp3"), timeout=10.0)
-            import os
             
             # 使用更精確的播放時間估算
             estimated_duration = len(clean_speech_text) * 0.18 + 1.0  # 每個字約0.18秒 + 1秒緩衝
             print(f"Edge-TTS 語音合成完成，預估播放時間：{estimated_duration:.1f}秒")
             
-            os.system("start response_audio.mp3")
+            # 跨平台音頻播放
+            play_audio_file("response_audio.mp3")
             print("Edge-TTS 語音播放開始")
             
             # 等待語音播放完成（使用更保守的時間估算）
@@ -744,30 +816,16 @@ async def play_response(response_text):
             
         except (Exception, asyncio.TimeoutError) as e:
             print(f"Edge-TTS 失敗（網路問題或服務不可用）：{e}")
-            # 備用方案：使用 Windows 內建的 SAPI 語音
+            # 備用方案：使用系統語音合成
             try:
-                import pyttsx3
-                engine = pyttsx3.init()
-                # 設定語音速度和音調
-                engine.setProperty('rate', 150)  # 語速
-                engine.setProperty('volume', 0.8)  # 音量
-                # 嘗試設定中文語音
-                voices = engine.getProperty('voices')
-                for voice in voices:
-                    if 'chinese' in voice.name.lower() or 'zh' in voice.id.lower() or 'mandarin' in voice.name.lower():
-                        engine.setProperty('voice', voice.id)
-                        break
-                        
-                print("使用 Windows 內建語音播放")
-                engine.say(clean_speech_text)
-                engine.runAndWait()  # 這個會等待播放完成
-                print("Windows 內建語音播放完成")
+                play_system_voice(clean_speech_text)
+                print("使用系統語音播放完成")
                 
                 # 額外等待確保播放完成
                 await asyncio.sleep(1.5)
                 
             except Exception as backup_error:
-                print(f"Windows 語音系統也失敗：{backup_error}")
+                print(f"系統語音也失敗：{backup_error}")
                 print("只顯示文字回應，無語音播放")
                 await asyncio.sleep(0.5)  # 短暫等待後釋放鎖
                 
