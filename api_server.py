@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Body, UploadFile, File, Path
+from fastapi import FastAPI, Body, UploadFile, File, Path, Depends, HTTPException, status, Header
 from main import (
     handle_item_query,
     handle_time_query,
@@ -16,6 +16,7 @@ import shutil
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
+from typing import Optional
 
 app = FastAPI()
 
@@ -70,53 +71,96 @@ async def stt(file: UploadFile = File(...)):
     text = transcribe_audio()
     return {"text": text}
 
+# 假設你有一個簡單的用戶驗證機制（例如 JWT、Session、或測試用 user_id header）
+# 這裡用 header 傳 user_id 做示範，實際可換成 OAuth2/JWT 等
+
+# 修正 get_current_user，從 Header 取得 X-User-Id，避免與其他欄位衝突
+def get_current_user(x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    if not x_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登入")
+    return x_user_id
+
 @app.get("/mongo_items/")
-async def mongo_items():
-    items = await db.items.find().to_list(100)
-    # 轉換 ObjectId 為字串
+async def mongo_items(user_id: str = Depends(get_current_user)):
+    items = await db.items.find({"user_id": user_id}).to_list(100)
     for item in items:
         if "_id" in item:
             item["_id"] = str(item["_id"])
     return {"items": items}
 
+@app.post("/mongo_items/")
+async def create_mongo_item(item: dict = Body(...), user_id: str = Depends(get_current_user)):
+    item["user_id"] = user_id
+    result = await db.items.insert_one(item)
+    item["_id"] = str(result.inserted_id)
+    return item
+
+@app.delete("/mongo_items/{item_id}")
+async def delete_mongo_item(item_id: str = Path(...), user_id: str = Depends(get_current_user)):
+    try:
+        obj_id = ObjectId(item_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ObjectId")
+    result = await db.items.delete_one({"_id": obj_id, "user_id": user_id})
+    return {"deleted_count": result.deleted_count}
+
+# 新增：建立行程（和 item 對齊）
+@app.post("/mongo_schedules/")
+async def create_mongo_schedule(schedule: dict = Body(...), user_id: str = Depends(get_current_user)):
+    schedule["user_id"] = user_id
+    result = await db.schedules.insert_one(schedule)
+    schedule["_id"] = str(result.inserted_id)
+    return schedule
+
 @app.get("/mongo_schedules/")
-async def mongo_schedules():
-    schedules = await db.schedules.find().to_list(100)
+async def mongo_schedules(user_id: str = Depends(get_current_user)):
+    schedules = await db.schedules.find({"user_id": user_id}).to_list(100)
     for s in schedules:
         if "_id" in s:
             s["_id"] = str(s["_id"])
     return {"schedules": schedules}
 
+@app.delete("/mongo_schedules/{schedule_id}")
+async def delete_mongo_schedule(schedule_id: str = Path(...), user_id: str = Depends(get_current_user)):
+    try:
+        obj_id = ObjectId(schedule_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ObjectId")
+    result = await db.schedules.delete_one({"_id": obj_id, "user_id": user_id})
+    return {"deleted_count": result.deleted_count}
+
 @app.get("/mongo_emotions/")
-async def mongo_emotions():
-    emotions = await db.emotions.find().to_list(100)
+async def mongo_emotions(user_id: str = Depends(get_current_user)):
+    emotions = await db.emotions.find({"user_id": user_id}).to_list(100)
     for e in emotions:
         if "_id" in e:
             e["_id"] = str(e["_id"])
     return {"emotions": emotions}
 
 @app.get("/mongo_chat_history/")
-async def mongo_chat_history():
-    chats = await db.chat_history.find().to_list(100)
+async def mongo_chat_history(user_id: str = Depends(get_current_user)):
+    chats = await db.chat_history.find({"user_id": user_id}).to_list(100)
     for c in chats:
         if "_id" in c:
             c["_id"] = str(c["_id"])
     return {"chat_history": chats}
 
-# 所以前端 axios.delete('/schedules/xxx') 或 axios.delete('/mongo_schedules/xxx') 會 404，資料不會被刪除
+# 標記舊的不分 user_id 查詢端點為 deprecated（可直接註解或加說明）
+# @app.get("/mongo_schedules/")  # 已被新版覆蓋
+# async def mongo_schedules_all(): ...
+# @app.get("/mongo_emotions/")    # 已被新版覆蓋
+# async def mongo_emotions_all(): ...
+# @app.get("/mongo_chat_history/") # 已被新版覆蓋
+# async def mongo_chat_history_all(): ...
 
-# 請新增如下 API 讓前端可以刪除行程
-@app.delete("/mongo_schedules/{schedule_id}")
-async def delete_mongo_schedule(schedule_id: str = Path(...)):
-    result = await db.schedules.delete_one({"_id": schedule_id})
-    return {"deleted_count": result.deleted_count}
-
-@app.delete("/mongo_items/{item_id}")
-async def delete_mongo_item(item_id: str = Path(...)):
-    # 若 _id 是 ObjectId，需轉型
-    result = await db.items.delete_one({"_id": ObjectId(item_id)})
-    return {"deleted_count": result.deleted_count}
-
+@app.on_event("startup")
+async def ensure_indexes():
+    # 為常用過濾欄位建立索引，提高查詢效率
+    await db.items.create_index("user_id")
+    await db.schedules.create_index("user_id")
+    await db.emotions.create_index("user_id")
+    await db.chat_history.create_index("user_id")
 
 if __name__ == "__main__":
     uvicorn.run("api_server:app", host="0.0.0.0", port=8000)
+
