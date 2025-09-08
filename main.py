@@ -358,8 +358,9 @@ async def save_emotion_log(text_emotion, audio_emotion):
     }
     await db.emotions.insert_one(log)  # 只寫入 MongoDB
 
+# 在適當位置（如 save_emotion_log 之後）補上 async 版本
 async def save_emotion_log_enhanced(emotion_log):
-    await db.emotions.insert_one(emotion_log)  # 只寫入 MongoDB
+    await db.emotions.insert_one(emotion_log)
 
 async def handle_item_input(text):
     """
