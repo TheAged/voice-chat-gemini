@@ -96,10 +96,3 @@ async def mongo_emotions():
 
 if __name__ == "__main__":
     uvicorn.run("api_server:app", host="0.0.0.0", port=8000)
-    for item in items:
-        if "_id" in item:
-            item["_id"] = str(item["_id"])
-    return {"items": items}
-
-if __name__ == "__main__":
-    uvicorn.run("api_server:app", host="0.0.0.0", port=8000)
