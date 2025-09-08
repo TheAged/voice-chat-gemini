@@ -358,9 +358,6 @@ async def save_emotion_log(text_emotion, audio_emotion):
     }
     await db.emotions.insert_one(log)  # 只寫入 MongoDB
 
-async def save_emotion_log_enhanced(emotion_log):
-    await db.emotions.insert_one(emotion_log)  # 只寫入 MongoDB
-
 async def handle_item_input(text):
     """
     從文字中提取物品資訊並記錄到 JSON 檔案。
