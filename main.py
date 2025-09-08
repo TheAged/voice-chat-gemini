@@ -6,7 +6,7 @@ import whisper
 import json
 import re
 import emoji
-import numpy as np  # 添加 numpy 導入以支援語音活動檢測
+import numpy as np  
 from datetime import datetime, timedelta
 import google.generativeai as genai
 import edge_tts  
@@ -17,6 +17,7 @@ import asyncio
 import os
 import platform
 from dotenv import load_dotenv
+from motor.motor_asyncio import AsyncIOMotorClient
 
 # 跨平台音效導入
 try:
@@ -42,11 +43,11 @@ genai.configure(api_key=api_key)
 model = genai.GenerativeModel(model_name)
 
 # 從環境變數讀取檔案路徑配置
-ITEMS_FILE = os.getenv("ITEMS_FILE", "items.json")
-SCHEDULE_FILE = os.getenv("SCHEDULE_FILE", "schedules.json")
+# ITEMS_FILE = os.getenv("ITEMS_FILE", "items.json")
+# SCHEDULE_FILE = os.getenv("SCHEDULE_FILE", "schedules.json")
 AUDIO_PATH = os.getenv("AUDIO_PATH", "audio_input.wav")
-CHAT_HISTORY_FILE = os.getenv("CHAT_HISTORY_FILE", "chat_history.json")
-EMOTION_LOG_FILE = "emotions.json"
+#CHAT_HISTORY_FILE = os.getenv("CHAT_HISTORY_FILE", "chat_history.json")
+# EMOTION_LOG_FILE = "emotions.json"
 
 # 從環境變數讀取 Whisper 配置
 whisper_model_size = os.getenv("WHISPER_MODEL", "base")
@@ -59,6 +60,11 @@ AUDIO_DURATION = int(os.getenv("AUDIO_DURATION", "8"))
 # 從環境變數讀取 TTS 配置
 TTS_VOICE = os.getenv("TTS_VOICE", "zh-CN-XiaoxiaoNeural")
 TTS_RATE = float(os.getenv("TTS_RATE", "1.0"))
+
+# MongoDB 連線設定
+MONGO_URL = "mongodb://b310:pekopeko878@localhost:27017/?authSource=admin"
+mongo_client = AsyncIOMotorClient(MONGO_URL)
+db = mongo_client["userdb"]
 
 # ─────── 語音控制狀態 ───────
 is_playing_audio = False  # 是否正在播放語音
@@ -148,8 +154,10 @@ def detect_item_query(text):
     
     return has_query_keyword and has_item_keyword
 
-def handle_item_query(text):
-    """處理物品查詢請求，主動建議可能地點"""
+async def handle_item_query(text):
+    """
+    從 MongoDB 查詢物品位置，主動建議可能地點
+    """
     prompt = f"""請從下面這句話中找出使用者想要查詢的物品名稱，只回傳物品名稱，不要加其他文字：
     句子：「{text}」
     例如：「我的書包在哪？」→ 書包
@@ -159,9 +167,10 @@ def handle_item_query(text):
         return "抱歉，我無法理解你要查詢什麼物品。"
     item_name = item_name.strip().replace("「", "").replace("」", "")
 
-    # 查詢物品記錄
-    records = load_json(ITEMS_FILE)
-    found_items = [r for r in records if item_name in r.get('item', '') or r.get('item', '') in item_name]
+    # 從 MongoDB 查詢物品記錄
+    found_items = []
+    async for r in db.items.find({"item": {"$regex": item_name}}):
+        found_items.append(r)
 
     if found_items:
         # 找到最新的記錄
@@ -184,7 +193,7 @@ def handle_item_query(text):
             time_str = "之前"
         # 主動建議
         response = (
-            f"你可以到「{location}」找找看你的「{latest_record['item']}」，"
+            f"你可以到「{location}」找找看你的「{latest_record.get('item', item_name)}」，"
             "找到後記得放回原本的位置。如果你有換地方放，記得跟我說一聲，我會幫你記下來。"
         )
         if len(found_items) > 1:
@@ -333,33 +342,24 @@ def detect_user_intent(text):
         else:
             return 1
 
-def save_chat_log(user_input, ai_response):
+async def save_chat_log(user_input, ai_response):
     log = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "user": user_input,
         "response": ai_response
     }
-    try:
-        with open(CHAT_HISTORY_FILE, "r", encoding="utf-8") as f:
-            records = json.load(f)
-    except:
-        records = []
-    records.append(log)
-    save_json(CHAT_HISTORY_FILE, records)
+    await db.chat_history.insert_one(log)  # 直接寫入 MongoDB
 
-def save_emotion_log(text_emotion, audio_emotion):
+async def save_emotion_log(text_emotion, audio_emotion):
     log = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "text_emotion": text_emotion,
         "audio_emotion": audio_emotion
     }
-    try:
-        with open(EMOTION_LOG_FILE, "r", encoding="utf-8") as f:
-            records = json.load(f)
-    except:
-        records = []
-    records.append(log)
-    save_json(EMOTION_LOG_FILE, records)
+    await db.emotions.insert_one(log)  # 只寫入 MongoDB
+
+async def save_emotion_log_enhanced(emotion_log):
+    await db.emotions.insert_one(emotion_log)  # 只寫入 MongoDB
 
 async def handle_item_input(text):
     """
@@ -385,10 +385,9 @@ async def handle_item_input(text):
         print(f"回傳格式錯誤，無法解析：{reply}")
         return
 
-    records = load_json(ITEMS_FILE)
     data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    records.append(data)
-    save_json(ITEMS_FILE, records)
+    # 物品記錄
+    await db.items.insert_one(data)
 
     print(f"已記錄：「{data['item']}」放在 {data['location']}")
 
@@ -588,57 +587,48 @@ def parse_relative_time(text):
 reminder_scheduler = None
 reminder_thread = None
 
+async def check_reminders():
+    """從 MongoDB 檢查並執行到時的提醒"""
+    try:
+        current_time = datetime.now()
+        schedules = await db.schedules.find({"reminded": {"$ne": True}}).to_list(1000)
+        for schedule_item in schedules:
+            if 'time' in schedule_item and not schedule_item.get('reminded'):
+                if schedule_item['time'] is None or schedule_item['time'] == "":
+                    continue
+                try:
+                    schedule_time = datetime.strptime(schedule_item['time'], "%Y-%m-%d %H:%M")
+                    time_diff = abs((current_time - schedule_time).total_seconds())
+                    if time_diff <= 60:
+                        execute_reminder(schedule_item)
+                        await db.schedules.update_one(
+                            {"_id": schedule_item["_id"]},
+                            {"$set": {"reminded": True}}
+                        )
+                except ValueError:
+                    continue
+    except Exception as e:
+        print(f"檢查提醒時發生錯誤：{e}")
+
 def start_reminder_system():
     """啟動提醒系統後台服務"""
     global reminder_scheduler, reminder_thread
-    
+
     if reminder_thread and reminder_thread.is_alive():
-        return  # 已經在運行
-    
+        return
+
     def run_scheduler():
         global reminder_scheduler
         reminder_scheduler = schedule
-        
-        # 每分鐘檢查一次是否有提醒
-        reminder_scheduler.every().minute.do(check_reminders)
-        
+
+        # 每分鐘檢查一次是否有提醒（改為呼叫 async 版本）
         while True:
-            reminder_scheduler.run_pending()
-            time.sleep(30)  # 每30秒檢查一次
-    
+            asyncio.run(check_reminders())
+            time.sleep(60)
+
     reminder_thread = threading.Thread(target=run_scheduler, daemon=True)
     reminder_thread.start()
     print("提醒系統已啟動（後台運行）")
-
-def check_reminders():
-    """檢查並執行到時的提醒"""
-    try:
-        schedules = load_json(SCHEDULE_FILE)
-        current_time = datetime.now()
-        
-        for i, schedule_item in enumerate(schedules):
-            if 'time' in schedule_item and 'reminded' not in schedule_item:
-                # 檢查 time 是否為 None 或空值
-                if schedule_item['time'] is None or schedule_item['time'] == "":
-                    continue  # 跳過沒有時間的提醒
-                
-                try:
-                    schedule_time = datetime.strptime(schedule_item['time'], "%Y-%m-%d %H:%M")
-                    # 檢查是否到了提醒時間（允許1分鐘誤差）
-                    time_diff = abs((current_time - schedule_time).total_seconds())
-                    
-                    if time_diff <= 60:  # 1分鐘內
-                        # 執行提醒
-                        execute_reminder(schedule_item)
-                        # 標記為已提醒
-                        schedules[i]['reminded'] = True
-                        save_json(SCHEDULE_FILE, schedules)
-                        
-                except ValueError:
-                    continue  # 時間格式錯誤，跳過
-                    
-    except Exception as e:
-        print(f"檢查提醒時發生錯誤：{e}")
 
 def execute_reminder(schedule_item):
     """執行提醒動作"""
@@ -828,7 +818,7 @@ async def play_response(response_text):
         await asyncio.sleep(2.0)  # 增加到2秒避免音頻重疊
         with audio_lock:
             is_playing_audio = False
-        print("🎵 語音播放完成，等待2秒後準備接受新的語音輸入...")
+        print(" 語音播放完成，等待2秒後準備接受新的語音輸入...")
         
         # 額外等待，確保音頻系統完全釋放
         await asyncio.sleep(1.0)
@@ -856,11 +846,11 @@ def record_audio(duration=None, samplerate=None):
     
     # 額外等待確保音頻系統釋放
     if wait_count > 0:
-        print("🎵 語音播放完成，額外等待1秒確保音頻系統釋放...")
+        print(" 語音播放完成，額外等待1秒確保音頻系統釋放...")
         time.sleep(1.0)
     
     print(f"\n開始錄音（最長 {duration} 秒）")
-    print("💡 提示：說完話後按 Enter 可提前結束錄音")
+    print(" 提示：說完話後按 Enter 可提前結束錄音")
     
     # 用於控制錄音是否提前結束
     stop_recording = threading.Event()
@@ -1021,7 +1011,7 @@ async def chat_with_emotion(text, audio_path, query_context=None, enable_facial=
 請以{tone}語氣回應，直接說中文："""
 
     reply = safe_generate(prompt)
-    save_chat_log(text, reply)
+    await save_chat_log(text, reply)
     
     # 保存詳細情緒記錄
     emotion_log = {
@@ -1067,7 +1057,7 @@ def save_emotion_log_enhanced(emotion_log):
     with open(EMOTION_LOG_FILE, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
 
-def handle_schedule_input(text):
+async def handle_schedule_input(text):
     """
     從文字中提取時程資訊並記錄到 JSON 檔案。
     """
@@ -1103,16 +1093,14 @@ def handle_schedule_input(text):
 
         try:
             data = json.loads(reply)
-            data["time"] = parsed_time  # 使用我們解析的時間
-                
+            data["time"] = parsed_time
         except:
             print(f"回傳格式錯誤，無法解析：{reply}")
             return
 
-        schedules = load_json(SCHEDULE_FILE)
         data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        schedules.append(data)
-        save_json(SCHEDULE_FILE, schedules)
+        # 行程記錄
+        await db.schedules.insert_one(data)  # 只寫入 MongoDB
 
         print(f"已安排：{data.get('person', '我')} 在 {data.get('time', '未指定時間')} 要「{data.get('task', '未知任務')}」@{data.get('location', '未知地點')}")
         
@@ -1133,7 +1121,7 @@ def handle_schedule_input(text):
         print(" 抱歉，我無法理解您指定的時間格式。")
         print("請使用以下格式：")
         print("- 相對時間：「等等20分提醒我吃藥」")
-        print("- 具體時間：「晚上7點48分提醒我吃藥」、「明天9點開會」")
+        print("- 具體時間：「晚上7點48分提醒我吃藊」、「明天9點開會」")
         print("- 今天時間：「今天下午3點開會」")
         return
 
@@ -1221,21 +1209,21 @@ async def main():
             print("物品記錄完成")
             reply = f"好的，我記住了你的{user_input.replace('放在', '放在').replace('放到', '放到')}"
             print(f"Gemini：{reply}")
-            save_chat_log(user_input, reply)
+            await save_chat_log(user_input, reply)
         elif intent == 3:  # 安排時程提醒
             print("檢測到行程安排語句，記錄中...")
             handle_schedule_input(user_input)
             print("行程安排完成")
             reply = f"好的，我已經幫你記錄了，到時候會提醒你喔！"
             print(f"Gemini：{reply}")
-            save_chat_log(user_input, reply)
+            await save_chat_log(user_input, reply)
             await play_response(reply) 
         elif intent == 4:  # 查詢物品位置
             print(" 檢測到物品查詢語句，查詢中...")
             query_result = handle_item_query(user_input)
             print(f"查詢結果：{query_result}")
             print(f"Gemini：{query_result}")
-            save_chat_log(user_input, query_result)
+            await save_chat_log(user_input, query_result)
             await play_response(query_result)  # Gemini語音播報查詢結果
 
             # 進入查找循環
@@ -1305,7 +1293,7 @@ async def main():
             print(" 檢測到時間查詢，本地處理中...")
             time_response = handle_time_query(user_input)
             print(f"Gemini：{time_response}")
-            save_chat_log(user_input, time_response)
+            await save_chat_log(user_input, time_response)
         else:  # 備用方案
             result = await chat_with_emotion(user_input, AUDIO_PATH)
             print(f"Gemini：{result['reply']}")
