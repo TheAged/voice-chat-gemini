@@ -971,7 +971,9 @@ async def chat_with_emotion(text, audio_path, query_context=None, enable_facial=
     audio_emotion = emotion_details.get("audio_emotion", final_emotion)
     facial_emotion = emotion_details.get("facial_emotion", None)
 
-    history = load_json(CHAT_HISTORY_FILE)[-3:]
+    # 取得最近 3 筆聊天紀錄
+    history = await db.chat_history.find().sort("timestamp", -1).to_list(3)
+    history = list(reversed(history))  # 讓順序由舊到新
     context = "\n".join([f"使用者：{h['user']}\nAI：{h['response']}" for h in history])
 
     # 根據最終融合情緒選擇語氣
