@@ -69,33 +69,32 @@ async def stt(file: UploadFile = File(...)):
     text = transcribe_audio()
     return {"text": text}
 
-@app.get("/mongo_items/")
-async def mongo_items():
+@app.get("/items")
+async def items():
     items = await db.items.find().to_list(100)
-    # 轉換 ObjectId 為字串
     for item in items:
         if "_id" in item:
             item["_id"] = str(item["_id"])
     return {"items": items}
 
-@app.get("/mongo_schedules/")
-async def mongo_schedules():
+@app.get("/schedules")
+async def schedules():
     schedules = await db.schedules.find().to_list(100)
     for s in schedules:
         if "_id" in s:
             s["_id"] = str(s["_id"])
     return {"schedules": schedules}
 
-@app.get("/mongo_emotions/")
-async def mongo_emotions():
+@app.get("/emotions")
+async def emotions():
     emotions = await db.emotions.find().to_list(100)
     for e in emotions:
         if "_id" in e:
             e["_id"] = str(e["_id"])
     return {"emotions": emotions}
 
-@app.get("/mongo_chat_history/")
-async def mongo_chat_history():
+@app.get("/chat_history")
+async def chat_history():
     chats = await db.chat_history.find().to_list(100)
     for c in chats:
         if "_id" in c:
@@ -103,4 +102,5 @@ async def mongo_chat_history():
     return {"chat_history": chats}
 
 if __name__ == "__main__":
+    uvicorn.run("api_server:app", host="0.0.0.0", port=8000)
     uvicorn.run("api_server:app", host="0.0.0.0", port=8000)
