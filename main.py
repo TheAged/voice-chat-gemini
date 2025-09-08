@@ -1026,7 +1026,7 @@ async def chat_with_emotion(text, audio_path, query_context=None, enable_facial=
         "modalities": emotion_details["modalities_used"],
         "confidence": emotion_details.get("confidence_scores", {})
     }
-    save_emotion_log_enhanced(emotion_log)
+    await save_emotion_log_enhanced(emotion_log)
     
     # 記錄情緒到統計系統（使用最終融合情緒）
     record_daily_emotion(final_emotion)
@@ -1041,23 +1041,6 @@ async def chat_with_emotion(text, audio_path, query_context=None, enable_facial=
         "final_emotion": final_emotion,
         "emotion_details": emotion_details
     }
-
-def save_emotion_log_enhanced(emotion_log):
-    """儲存增強的情緒記錄"""
-    try:
-        with open(EMOTION_LOG_FILE, "r", encoding="utf-8") as f:
-            records = json.load(f)
-    except:
-        records = []
-    
-    records.append(emotion_log)
-    
-    # 保留最近 1000 筆記錄
-    if len(records) > 1000:
-        records = records[-1000:]
-    
-    with open(EMOTION_LOG_FILE, "w", encoding="utf-8") as f:
-        json.dump(records, f, ensure_ascii=False, indent=2)
 
 async def handle_schedule_input(text):
     """
