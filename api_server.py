@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Body, UploadFile, File
+from fastapi import FastAPI, Body, UploadFile, File, Path
 from main import (
     handle_item_query,
     handle_time_query,
@@ -15,6 +15,7 @@ import uvicorn
 import shutil
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
 
 app = FastAPI()
 
@@ -101,6 +102,21 @@ async def mongo_chat_history():
         if "_id" in c:
             c["_id"] = str(c["_id"])
     return {"chat_history": chats}
+
+# 所以前端 axios.delete('/schedules/xxx') 或 axios.delete('/mongo_schedules/xxx') 會 404，資料不會被刪除
+
+# 請新增如下 API 讓前端可以刪除行程
+@app.delete("/mongo_schedules/{schedule_id}")
+async def delete_mongo_schedule(schedule_id: str = Path(...)):
+    result = await db.schedules.delete_one({"_id": schedule_id})
+    return {"deleted_count": result.deleted_count}
+
+@app.delete("/mongo_items/{item_id}")
+async def delete_mongo_item(item_id: str = Path(...)):
+    # 若 _id 是 ObjectId，需轉型
+    result = await db.items.delete_one({"_id": ObjectId(item_id)})
+    return {"deleted_count": result.deleted_count}
+
 
 if __name__ == "__main__":
     uvicorn.run("api_server:app", host="0.0.0.0", port=8000)
