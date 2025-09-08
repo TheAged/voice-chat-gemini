@@ -358,7 +358,7 @@ async def save_emotion_log(text_emotion, audio_emotion):
     }
     await db.emotions.insert_one(log)  # 只寫入 MongoDB
 
-# 在適當位置（如 save_emotion_log 之後）補上 async 版本
+# 確認這段 async 函式已經存在於 main.py，且位置在 chat_with_emotion 定義之前
 async def save_emotion_log_enhanced(emotion_log):
     await db.emotions.insert_one(emotion_log)
 
