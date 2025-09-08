@@ -94,5 +94,13 @@ async def mongo_emotions():
             e["_id"] = str(e["_id"])
     return {"emotions": emotions}
 
+@app.get("/mongo_chat_history/")
+async def mongo_chat_history():
+    chats = await db.chat_history.find().to_list(100)
+    for c in chats:
+        if "_id" in c:
+            c["_id"] = str(c["_id"])
+    return {"chat_history": chats}
+
 if __name__ == "__main__":
     uvicorn.run("api_server:app", host="0.0.0.0", port=8000)
