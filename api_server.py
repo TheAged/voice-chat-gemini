@@ -126,7 +126,7 @@ async def register(user: RegisterInput):
 @app.post("/login/")
 async def login(username: str = Body(...), password: str = Body(...)):
     user = await db.users.find_one({"username": username})
-    if not user or not pwd_context.verify(password, user.get("password", "")):
+    if not user or not pwd_context.verify(password, user.get("hashed_password", "")):
         raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
     user_id = str(user["_id"])
     try:
