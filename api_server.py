@@ -21,6 +21,7 @@ from typing import Optional
 from passlib.context import CryptContext
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -88,14 +89,37 @@ async def stt(file: UploadFile = File(...)):
     text = transcribe_audio()
     return {"text": text}
 
+class RegisterInput(BaseModel):
+    name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    password: str
+
+    class Config:
+        extra = "ignore"  # 忽略多餘的欄位，避免 422
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
 @app.post("/register/")
-async def register(username: str = Body(...), password: str = Body(...)):
+async def register(user: RegisterInput):
+    # 決定帳號欄位（優先 email，再 phone）
+    username = user.email or user.phone
+    if not username:
+        raise HTTPException(status_code=400, detail="Email or phone is required as username")
     # 檢查是否已存在
     if await db.users.find_one({"username": username}):
         raise HTTPException(status_code=400, detail="Username already exists")
-    hashed_password = pwd_context.hash(password)
-    result = await db.users.insert_one({"username": username, "password": hashed_password})
-    return {"user_id": str(result.inserted_id)}
+    hashed_password = get_password_hash(user.password)
+    new_user = {
+        "username": username,
+        "hashed_password": hashed_password,
+        "name": user.name,
+        "phone": user.phone,
+        "email": user.email,
+    }
+    await db.users.insert_one(new_user)
+    return {"msg": "User registered", "username": username}
 
 @app.post("/login/")
 async def login(username: str = Body(...), password: str = Body(...)):
