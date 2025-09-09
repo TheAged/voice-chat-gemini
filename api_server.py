@@ -78,25 +78,31 @@ async def stt(file: UploadFile = File(...)):
 def get_current_user(x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
     if not x_user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登入")
-    return x_user_id
+    try:
+        return ObjectId(x_user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="X-User-Id 必須為合法 24 hex ObjectId")
+
+@app.post("/mongo_items/")
+async def create_mongo_item(item: dict = Body(...), user_id: ObjectId = Depends(get_current_user)):
+    item["user_id"] = user_id
+    result = await db.items.insert_one(item)
+    item["_id"] = str(result.inserted_id)
+    item["user_id"] = str(user_id)
+    return item
 
 @app.get("/mongo_items/")
-async def mongo_items(user_id: str = Depends(get_current_user)):
+async def mongo_items(user_id: ObjectId = Depends(get_current_user)):
     items = await db.items.find({"user_id": user_id}).to_list(100)
     for item in items:
         if "_id" in item:
             item["_id"] = str(item["_id"])
+        if "user_id" in item:
+            item["user_id"] = str(item["user_id"])
     return {"items": items}
 
-@app.post("/mongo_items/")
-async def create_mongo_item(item: dict = Body(...), user_id: str = Depends(get_current_user)):
-    item["user_id"] = user_id
-    result = await db.items.insert_one(item)
-    item["_id"] = str(result.inserted_id)
-    return item
-
 @app.delete("/mongo_items/{item_id}")
-async def delete_mongo_item(item_id: str = Path(...), user_id: str = Depends(get_current_user)):
+async def delete_mongo_item(item_id: str = Path(...), user_id: ObjectId = Depends(get_current_user)):
     try:
         obj_id = ObjectId(item_id)
     except Exception:
@@ -104,24 +110,26 @@ async def delete_mongo_item(item_id: str = Path(...), user_id: str = Depends(get
     result = await db.items.delete_one({"_id": obj_id, "user_id": user_id})
     return {"deleted_count": result.deleted_count}
 
-# 新增：建立行程（和 item 對齊）
 @app.post("/mongo_schedules/")
-async def create_mongo_schedule(schedule: dict = Body(...), user_id: str = Depends(get_current_user)):
+async def create_mongo_schedule(schedule: dict = Body(...), user_id: ObjectId = Depends(get_current_user)):
     schedule["user_id"] = user_id
     result = await db.schedules.insert_one(schedule)
     schedule["_id"] = str(result.inserted_id)
+    schedule["user_id"] = str(user_id)
     return schedule
 
 @app.get("/mongo_schedules/")
-async def mongo_schedules(user_id: str = Depends(get_current_user)):
+async def mongo_schedules(user_id: ObjectId = Depends(get_current_user)):
     schedules = await db.schedules.find({"user_id": user_id}).to_list(100)
     for s in schedules:
         if "_id" in s:
             s["_id"] = str(s["_id"])
+        if "user_id" in s:
+            s["user_id"] = str(s["user_id"])
     return {"schedules": schedules}
 
 @app.delete("/mongo_schedules/{schedule_id}")
-async def delete_mongo_schedule(schedule_id: str = Path(...), user_id: str = Depends(get_current_user)):
+async def delete_mongo_schedule(schedule_id: str = Path(...), user_id: ObjectId = Depends(get_current_user)):
     try:
         obj_id = ObjectId(schedule_id)
     except Exception:
@@ -130,19 +138,23 @@ async def delete_mongo_schedule(schedule_id: str = Path(...), user_id: str = Dep
     return {"deleted_count": result.deleted_count}
 
 @app.get("/mongo_emotions/")
-async def mongo_emotions(user_id: str = Depends(get_current_user)):
+async def mongo_emotions(user_id: ObjectId = Depends(get_current_user)):
     emotions = await db.emotions.find({"user_id": user_id}).to_list(100)
     for e in emotions:
         if "_id" in e:
             e["_id"] = str(e["_id"])
+        if "user_id" in e:
+            e["user_id"] = str(e["user_id"])
     return {"emotions": emotions}
 
 @app.get("/mongo_chat_history/")
-async def mongo_chat_history(user_id: str = Depends(get_current_user)):
+async def mongo_chat_history(user_id: ObjectId = Depends(get_current_user)):
     chats = await db.chat_history.find({"user_id": user_id}).to_list(100)
     for c in chats:
         if "_id" in c:
             c["_id"] = str(c["_id"])
+        if "user_id" in c:
+            c["user_id"] = str(c["user_id"])
     return {"chat_history": chats}
 
 # 標記舊的不分 user_id 查詢端點為 deprecated（可直接註解或加說明）
