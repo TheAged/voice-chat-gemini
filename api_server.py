@@ -20,6 +20,7 @@ from bson import ObjectId
 from typing import Optional
 from passlib.context import CryptContext
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -34,7 +35,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MONGO_URL = "mongodb://b310:pekopeko878@localhost:27017/?authSource=admin"
+load_dotenv()  # 讀取 .env
+
+MONGO_URL = os.environ.get("MONGO_URL")
 mongo_client = AsyncIOMotorClient(MONGO_URL)
 db = mongo_client["userdb"]
 
