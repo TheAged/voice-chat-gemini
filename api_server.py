@@ -101,6 +101,7 @@ class RegisterInput(BaseModel):
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
+@app.post("/register")
 @app.post("/register/")
 async def register(user: RegisterInput):
     # 決定帳號欄位（優先 email，再 phone）
@@ -121,6 +122,7 @@ async def register(user: RegisterInput):
     await db.users.insert_one(new_user)
     return {"msg": "User registered", "username": username}
 
+@app.post("/login")
 @app.post("/login/")
 async def login(username: str = Body(...), password: str = Body(...)):
     user = await db.users.find_one({"username": username})
