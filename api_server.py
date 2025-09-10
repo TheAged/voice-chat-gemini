@@ -1,3 +1,99 @@
+# ========== Emotion Chart API ==========
+from datetime import datetime, timedelta
+from collections import defaultdict
+
+# GET /api/emotions/chart-data?weeks=12
+@app.get("/api/emotions/chart-data")
+async def get_emotion_chart_data(weeks: int = 12, user_id: str = Depends(get_current_user)):
+    from bson import ObjectId
+    # 取得 N 週前的起始時間
+    now = datetime.utcnow()
+    start_date = now - timedelta(weeks=weeks)
+    # 查詢該用戶 N 週內的情緒紀錄
+    cursor = db.emotions.find({
+        "user_id": ObjectId(user_id),
+        "timestamp": {"$gte": start_date}
+    })
+    records = await cursor.to_list(1000)
+    # 依週分組
+    week_map = defaultdict(list)
+    for rec in records:
+        ts = rec.get("timestamp")
+        if not ts:
+            continue
+        week_str = ts.strftime("%Y-W%U")
+        week_map[week_str].append(rec.get("emotion_value", 2))
+    # 產生週 labels 與平均值
+    sorted_weeks = sorted(week_map.keys())
+    values = [round(sum(week_map[w])/len(week_map[w]), 2) for w in sorted_weeks]
+    return {"weeks": sorted_weeks, "values": values}
+
+# POST /api/emotions/force-update
+@app.post("/api/emotions/force-update")
+async def force_update_emotions(user_id: str = Depends(get_current_user)):
+    # 實際應根據需求重算統計，這裡僅示意
+    return {"msg": "Emotion stats updated (stub)"}
+# 兼容前端 /api/items 路由（不驗證 JWT，僅示範用，實際應加驗證）
+@app.get("/api/items")
+async def get_items(user_id: str = Depends(get_current_user)):
+    from bson import ObjectId
+    items = await db.items.find({"user_id": ObjectId(user_id)}).to_list(100)
+    for item in items:
+        if "_id" in item:
+            item["_id"] = str(item["_id"])
+        if "user_id" in item:
+            item["user_id"] = str(item["user_id"])
+    return {"items": items}
+
+@app.post("/api/items")
+async def create_item(item: dict = Body(...), user_id: str = Depends(get_current_user)):
+    from bson import ObjectId
+    item["user_id"] = ObjectId(user_id)
+    result = await db.items.insert_one(item)
+    item["_id"] = str(result.inserted_id)
+    item["user_id"] = str(item["user_id"])
+    return item
+
+@app.delete("/api/items/{item_id}")
+async def delete_item(item_id: str = Path(...), user_id: str = Depends(get_current_user)):
+    from bson import ObjectId
+    try:
+        obj_id = ObjectId(item_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ObjectId")
+    result = await db.items.delete_one({"_id": obj_id, "user_id": ObjectId(user_id)})
+    return {"deleted_count": result.deleted_count}
+
+# 兼容前端 /schedules/ 路由
+@app.get("/schedules/")
+async def get_schedules(user_id: str = Depends(get_current_user)):
+    from bson import ObjectId
+    schedules = await db.schedules.find({"user_id": ObjectId(user_id)}).to_list(100)
+    for s in schedules:
+        if "_id" in s:
+            s["_id"] = str(s["_id"])
+        if "user_id" in s:
+            s["user_id"] = str(s["user_id"])
+    return {"schedules": schedules}
+
+@app.post("/schedules/")
+async def create_schedule(schedule: dict = Body(...), user_id: str = Depends(get_current_user)):
+    from bson import ObjectId
+    schedule["user_id"] = ObjectId(user_id)
+    result = await db.schedules.insert_one(schedule)
+    schedule["_id"] = str(result.inserted_id)
+    schedule["user_id"] = str(schedule["user_id"])
+    return schedule
+
+@app.delete("/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: str = Path(...), user_id: str = Depends(get_current_user)):
+    from bson import ObjectId
+    try:
+        obj_id = ObjectId(schedule_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ObjectId")
+    result = await db.schedules.delete_one({"_id": obj_id, "user_id": ObjectId(user_id)})
+    return {"deleted_count": result.deleted_count}
 from fastapi import FastAPI, Body, UploadFile, File, Path, Depends, HTTPException, status, Header
 from main import (
     handle_item_query,
@@ -98,6 +194,12 @@ class RegisterInput(BaseModel):
     class Config:
         extra = "ignore"  # 忽略多餘的欄位，避免 422
 
+
+# 新增 LoginInput 給 login API 用
+class LoginInput(BaseModel):
+    email: str
+    password: str
+
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
@@ -124,7 +226,10 @@ async def register(user: RegisterInput):
 
 @app.post("/login")
 @app.post("/login/")
-async def login(username: str = Body(...), password: str = Body(...)):
+async def login(data: LoginInput):
+    # 以 email 當 username 查詢
+    username = data.email
+    password = data.password
     user = await db.users.find_one({"username": username})
     if not user or not pwd_context.verify(password, user.get("hashed_password", "")):
         raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
