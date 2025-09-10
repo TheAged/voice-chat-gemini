@@ -1,11 +1,55 @@
-# ========== Emotion Chart API ==========
+
+from fastapi import FastAPI, Body, UploadFile, File, Path, Depends, HTTPException, status, Header
+from main import (
+    handle_item_query,
+    handle_time_query,
+    handle_item_input,
+    handle_schedule_input,
+    chat_with_emotion,
+    transcribe_audio,
+    vad_record_audio,
+    save_chat_log,
+    save_emotion_log,
+    AUDIO_PATH
+)
+from auth import create_access_token, get_current_user
+import uvicorn
+import shutil
+import os
+from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
+from typing import Optional
+from passlib.context import CryptContext
+from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+from pydantic import BaseModel
 from datetime import datetime, timedelta
 from collections import defaultdict
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+app = FastAPI()
+
+# CORS 設定
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+load_dotenv()  # 讀取 .env
+
+MONGO_URL = os.environ.get("MONGO_URL")
+mongo_client = AsyncIOMotorClient(MONGO_URL)
+db = mongo_client["userdb"]
+
+# ========== Emotion Chart API ==========
 
 # GET /api/emotions/chart-data?weeks=12
 @app.get("/api/emotions/chart-data")
 async def get_emotion_chart_data(weeks: int = 12, user_id: str = Depends(get_current_user)):
-    from bson import ObjectId
     # 取得 N 週前的起始時間
     now = datetime.utcnow()
     start_date = now - timedelta(weeks=weeks)
@@ -36,7 +80,6 @@ async def force_update_emotions(user_id: str = Depends(get_current_user)):
 # 兼容前端 /api/items 路由（不驗證 JWT，僅示範用，實際應加驗證）
 @app.get("/api/items")
 async def get_items(user_id: str = Depends(get_current_user)):
-    from bson import ObjectId
     items = await db.items.find({"user_id": ObjectId(user_id)}).to_list(100)
     for item in items:
         if "_id" in item:
@@ -47,7 +90,6 @@ async def get_items(user_id: str = Depends(get_current_user)):
 
 @app.post("/api/items")
 async def create_item(item: dict = Body(...), user_id: str = Depends(get_current_user)):
-    from bson import ObjectId
     item["user_id"] = ObjectId(user_id)
     result = await db.items.insert_one(item)
     item["_id"] = str(result.inserted_id)
@@ -56,7 +98,6 @@ async def create_item(item: dict = Body(...), user_id: str = Depends(get_current
 
 @app.delete("/api/items/{item_id}")
 async def delete_item(item_id: str = Path(...), user_id: str = Depends(get_current_user)):
-    from bson import ObjectId
     try:
         obj_id = ObjectId(item_id)
     except Exception:
@@ -67,7 +108,6 @@ async def delete_item(item_id: str = Path(...), user_id: str = Depends(get_curre
 # 兼容前端 /schedules/ 路由
 @app.get("/schedules/")
 async def get_schedules(user_id: str = Depends(get_current_user)):
-    from bson import ObjectId
     schedules = await db.schedules.find({"user_id": ObjectId(user_id)}).to_list(100)
     for s in schedules:
         if "_id" in s:
@@ -78,7 +118,6 @@ async def get_schedules(user_id: str = Depends(get_current_user)):
 
 @app.post("/schedules/")
 async def create_schedule(schedule: dict = Body(...), user_id: str = Depends(get_current_user)):
-    from bson import ObjectId
     schedule["user_id"] = ObjectId(user_id)
     result = await db.schedules.insert_one(schedule)
     schedule["_id"] = str(result.inserted_id)
@@ -87,56 +126,12 @@ async def create_schedule(schedule: dict = Body(...), user_id: str = Depends(get
 
 @app.delete("/schedules/{schedule_id}")
 async def delete_schedule(schedule_id: str = Path(...), user_id: str = Depends(get_current_user)):
-    from bson import ObjectId
     try:
         obj_id = ObjectId(schedule_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid ObjectId")
     result = await db.schedules.delete_one({"_id": obj_id, "user_id": ObjectId(user_id)})
     return {"deleted_count": result.deleted_count}
-from fastapi import FastAPI, Body, UploadFile, File, Path, Depends, HTTPException, status, Header
-from main import (
-    handle_item_query,
-    handle_time_query,
-    handle_item_input,
-    handle_schedule_input,
-    chat_with_emotion,
-    transcribe_audio,
-    vad_record_audio,
-    save_chat_log,
-    save_emotion_log,
-    AUDIO_PATH
-)
-from auth import create_access_token, get_current_user
-import uvicorn
-import shutil
-import os
-from motor.motor_asyncio import AsyncIOMotorClient
-from bson import ObjectId
-from typing import Optional
-from passlib.context import CryptContext
-from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-from pydantic import BaseModel
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-app = FastAPI()
-
-# CORS 設定
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-load_dotenv()  # 讀取 .env
-
-MONGO_URL = os.environ.get("MONGO_URL")
-mongo_client = AsyncIOMotorClient(MONGO_URL)
-db = mongo_client["userdb"]
 
 @app.get("/")
 def root():
@@ -240,10 +235,6 @@ async def login(data: LoginInput):
         raise HTTPException(status_code=400, detail="user_id 必須為合法 24 hex ObjectId")
     access_token = create_access_token({"user_id": user_id})
     return {"access_token": access_token, "token_type": "bearer"}
-
-# 用 JWT 驗證取代原本的 get_current_user
-# 取得 user_id 字串後轉換為 ObjectId
-from bson import ObjectId
 
 def get_current_user_objid(user_id: str = Depends(get_current_user)):
     try:
