@@ -218,8 +218,9 @@ async def register(user: RegisterInput):
             "phone": user.phone,
             "email": user.email,
         }
+        from fastapi.responses import JSONResponse
         await db.users.insert_one(new_user)
-        return {"msg": "User registered", "username": username}
+        return JSONResponse(content={"msg": "User registered", "username": username})
     except Exception as e:
         print("註冊發生錯誤：", e)
         raise
