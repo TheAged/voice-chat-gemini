@@ -197,26 +197,32 @@ class LoginInput(BaseModel):
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
+
 @app.post("/register")
 @app.post("/register/")
 async def register(user: RegisterInput):
-    # 決定帳號欄位（優先 email，再 phone）
-    username = user.email or user.phone
-    if not username:
-        raise HTTPException(status_code=400, detail="Email or phone is required as username")
-    # 檢查是否已存在
-    if await db.users.find_one({"username": username}):
-        raise HTTPException(status_code=400, detail="Username already exists")
-    hashed_password = get_password_hash(user.password)
-    new_user = {
-        "username": username,
-        "hashed_password": hashed_password,
-        "name": user.name,
-        "phone": user.phone,
-        "email": user.email,
-    }
-    await db.users.insert_one(new_user)
-    return {"msg": "User registered", "username": username}
+    try:
+        print("收到註冊資料：", user)
+        # 決定帳號欄位（優先 email，再 phone）
+        username = user.email or user.phone
+        if not username:
+            raise HTTPException(status_code=400, detail="Email or phone is required as username")
+        # 檢查是否已存在
+        if await db.users.find_one({"username": username}):
+            raise HTTPException(status_code=400, detail="Username already exists")
+        hashed_password = get_password_hash(user.password)
+        new_user = {
+            "username": username,
+            "hashed_password": hashed_password,
+            "name": user.name,
+            "phone": user.phone,
+            "email": user.email,
+        }
+        await db.users.insert_one(new_user)
+        return {"msg": "User registered", "username": username}
+    except Exception as e:
+        print("註冊發生錯誤：", e)
+        raise
 
 @app.post("/login")
 @app.post("/login/")
