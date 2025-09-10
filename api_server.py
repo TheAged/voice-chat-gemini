@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, Body, UploadFile, File, Path, Depends, HTTPException, status, Header
 from main import (
     handle_item_query,
