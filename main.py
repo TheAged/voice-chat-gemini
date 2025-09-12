@@ -1,78 +1,39 @@
-import schedule
-import time
-import sounddevice as sd
-from scipy.io.wavfile import write
-import whisper
-import json
-import re
-import emoji
-import numpy as np  
-from datetime import datetime, timedelta
-import google.generativeai as genai
-from emotion_module import detect_text_emotion, detect_audio_emotion, record_daily_emotion, multi_modal_emotion_detection
-from emotion_config import get_current_config, CURRENT_MODE
-import threading
-import asyncio
 import os
-import platform
+import threading
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from motor.motor_asyncio import AsyncIOMotorClient
-
-# 跨平台音效導入
-try:
-    if platform.system() == "Windows":
-        import winsound
-    else:
-        # Linux 音效替代方案
-        winsound = None
-except ImportError:
-    winsound = None
+from flask import Flask, Response, jsonify
+import socket, struct, time, traceback
+import cv2, numpy as np
+from collections import deque
+from fall_detection import process_frame
 
 # 載入環境變數
 load_dotenv()
 
-# 初始化 Gemini Flash 模型
-api_key = os.getenv("GOOGLE_API_KEY")
-model_name = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# 模組化引用
+from db import db
+from speech import record_audio, vad_record_audio, transcribe_audio, play_system_beep
+from emotion_module import detect_text_emotion, detect_audio_emotion, record_daily_emotion, multi_modal_emotion_detection
+from chat import chat_with_emotion, play_response, save_chat_log, save_emotion_log
+from items import handle_item_input, handle_item_query, detect_item_related, detect_item_query
+from schedules import handle_schedule_input, check_reminders, start_reminder_system, execute_reminder, play_reminder_voice
+from time_query import handle_time_query, detect_time_query, parse_relative_time
+from utils import clean_text_for_speech, clean_text_from_stt, detect_user_intent, safe_generate
 
-if not api_key:
-    raise ValueError("請在 .env 檔案中設定 GOOGLE_API_KEY")
-
-genai.configure(api_key=api_key)
-model = genai.GenerativeModel(model_name)
-
-# 從環境變數讀取檔案路徑配置
-# ITEMS_FILE = os.getenv("ITEMS_FILE", "items.json")
-# SCHEDULE_FILE = os.getenv("SCHEDULE_FILE", "schedules.json")
+# 其他初始化
 AUDIO_PATH = os.getenv("AUDIO_PATH", "audio_input.wav")
-#CHAT_HISTORY_FILE = os.getenv("CHAT_HISTORY_FILE", "chat_history.json")
-# EMOTION_LOG_FILE = "emotions.json"
-
-# 從環境變數讀取 Whisper 配置
 whisper_model_size = os.getenv("WHISPER_MODEL", "base")
-whisper_model = whisper.load_model(whisper_model_size)
-
-# 從環境變數讀取音頻配置
 AUDIO_SAMPLE_RATE = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
 AUDIO_DURATION = int(os.getenv("AUDIO_DURATION", "8"))
 
-# 從環境變數讀取 TTS 配置
-TTS_VOICE = os.getenv("TTS_VOICE", "zh-CN-XiaoxiaoNeural")
-TTS_RATE = float(os.getenv("TTS_RATE", "1.0"))
-
-# MongoDB 連線設定
-MONGO_URL = "mongodb://b310:pekopeko878@localhost:27017/?authSource=admin"
-mongo_client = AsyncIOMotorClient(MONGO_URL)
-db = mongo_client["userdb"]
-
-# 你只要在 main.py 裡面用 db.items, db.schedules, db.emotions, db.chat_history
-# 或 await db.items.find() ... 這些 collection 名稱，和 api_server.py 保持一致即可。
-# 你目前 main.py 的 MongoDB collection 名稱已經和 api_server.py 一致（items, schedules, emotions, chat_history）。
-# 所以你不需要做任何修改。
-
-# ─────── 語音控制狀態 ───────
-is_playing_audio = False  # 是否正在播放語音
-audio_lock = threading.Lock()  # 音頻互斥鎖
+# ======== Flask 與跌倒偵測全域變數 ========
+app = Flask(__name__)
+latest_frame_jpeg_raw = None
+latest_frame_jpeg_annotated = None
+frame_lock = threading.Lock()
+detect_queue = deque(maxlen=1)
+fall_warning = "No Fall Detected"
 
 # ─────── 工具函式 ───────
 def clean_text_for_speech(text):
@@ -749,61 +710,6 @@ def play_system_voice(text):
         print(f"系統語音合成失敗：{e}")
         raise
 
-# ─────── 播放語音功能 ───────
-async def play_response(response_text):
-    global is_playing_audio
-    
-    with audio_lock:
-        is_playing_audio = True
-    
-    try:
-        # 清理文字以供語音合成
-        clean_speech_text = clean_text_for_speech(response_text)
-        
-        try:
-            # 先嘗試使用 Edge-TTS
-            import asyncio
-            tts = edge_tts.Communicate(clean_speech_text, TTS_VOICE)
-            # 設定 10 秒超時
-            await asyncio.wait_for(tts.save("response_audio.mp3"), timeout=10.0)
-            
-            # 使用更精確的播放時間估算
-            estimated_duration = len(clean_speech_text) * 0.18 + 1.0  # 每個字約0.18秒 + 1秒緩衝
-            print(f"Edge-TTS 語音合成完成，預估播放時間：{estimated_duration:.1f}秒")
-            
-            # 跨平台音頻播放
-            play_audio_file("response_audio.mp3")
-            print("Edge-TTS 語音播放開始")
-            
-            # 等待語音播放完成（使用更保守的時間估算）
-            await asyncio.sleep(max(3.0, estimated_duration))  # 至少等待3秒
-            print("Edge-TTS 播放時間結束")
-            
-        except (Exception, asyncio.TimeoutError) as e:
-            print(f"Edge-TTS 失敗（網路問題或服務不可用）：{e}")
-            # 備用方案：使用系統語音合成
-            try:
-                play_system_voice(clean_speech_text)
-                print("使用系統語音播放完成")
-                
-                # 額外等待確保播放完成
-                await asyncio.sleep(1.5)
-                
-            except Exception as backup_error:
-                print(f"系統語音也失敗：{backup_error}")
-                print("只顯示文字回應，無語音播放")
-                await asyncio.sleep(0.5)  # 短暫等待後釋放鎖
-                
-    finally:
-        # 釋放播放狀態並等待額外時間避免錄音立即開始
-        await asyncio.sleep(2.0)  # 增加到2秒避免音頻重疊
-        with audio_lock:
-            is_playing_audio = False
-        print(" 語音播放完成，等待2秒後準備接受新的語音輸入...")
-        
-        # 額外等待，確保音頻系統完全釋放
-        await asyncio.sleep(1.0)
-
 # ─────── STT 錄音與辨識 ───────
 def record_audio(duration=None, samplerate=None):
     """固定時間錄音函數，支援按 Enter 提前停止，會檢查是否正在播放語音以避免衝突"""
@@ -1146,6 +1052,141 @@ def vad_record_audio(samplerate=None, max_silence=1.2, min_voice=0.5, max_record
     print("✅ 錄音完成並已保存")
     return True
 
+# ======== Socket 接收執行緒 ========
+def socket_server_thread():
+    global latest_frame_jpeg_raw
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+    srv.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    srv.bind(('0.0.0.0', 9999))
+    srv.listen(5)
+    print("[*] Socket 監聽 0.0.0.0:9999")
+    payload_size = struct.calcsize(">L")
+    while True:
+        conn, addr = None, None
+        try:
+            conn, addr = srv.accept()
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            print(f"[*] 已連線：{addr}")
+            data = b""
+            while True:
+                while len(data) < payload_size:
+                    pkt = conn.recv(65536)
+                    if not pkt: break
+                    data += pkt
+                if not pkt: break
+                packed = data[:payload_size]
+                data = data[payload_size:]
+                if len(packed) < payload_size: break
+                msg_size = struct.unpack(">L", packed)[0]
+                while len(data) < msg_size:
+                    pkt = conn.recv(65536)
+                    if not pkt: break
+                    data += pkt
+                if not pkt or len(data) < msg_size: break
+                frame_data = data[:msg_size]
+                data = data[msg_size:]
+                with frame_lock:
+                    latest_frame_jpeg_raw = frame_data
+                np_data = np.frombuffer(frame_data, np.uint8)
+                frame_bgr = cv2.imdecode(np_data, cv2.IMREAD_COLOR)
+                if frame_bgr is not None:
+                    if len(detect_queue) == detect_queue.maxlen:
+                        detect_queue.clear()
+                    detect_queue.append(frame_bgr)
+        except Exception as e:
+            print(f"[!] Socket 執行緒錯誤：{e}")
+            traceback.print_exc()
+        finally:
+            if conn:
+                print(f"[*] 關閉連線：{addr}")
+                try: conn.close()
+                except: pass
+
+# ======== 跌倒偵測執行緒 ========
+def fall_detection_thread():
+    global latest_frame_jpeg_annotated, fall_warning
+    DETECT_INTERVAL = 0.12
+    last = 0.0
+    while True:
+        if not detect_queue:
+            time.sleep(0.01); continue
+        now = time.time()
+        if now - last < DETECT_INTERVAL:
+            time.sleep(0.005); continue
+        last = now
+        frame = detect_queue.pop()
+        try:
+            fall_detected, annotated = process_frame(frame)
+            ok, jpg = cv2.imencode('.jpg', annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            if ok:
+                with frame_lock:
+                    latest_frame_jpeg_annotated = jpg.tobytes()
+            fall_warning = "Fall Detected!" if fall_detected else "No Fall Detected"
+            if fall_detected:
+                print("[INFO] 檢測到跌倒！")
+        except Exception as e:
+            print(f"[!] 偵測錯誤：{e}")
+
+# ======== MJPEG 產生器 ========
+def mjpeg_generator(getter):
+    while True:
+        buf = getter()
+        if buf is None:
+            time.sleep(0.01); continue
+        yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buf + b'\r\n')
+        time.sleep(0.005)
+
+def get_raw():
+    with frame_lock:
+        return latest_frame_jpeg_raw
+
+def get_annotated():
+    with frame_lock:
+        return latest_frame_jpeg_annotated
+
+# ======== Flask 路由 ========
+@app.route('/')
+def index():
+    return """
+    <html>
+    <head><title>Fall Stream</title></head>
+    <body>
+      <h2>原始串流（順暢）</h2>
+      <img src="/video_feed" width="640" height="480" />
+      <h2>標註串流（較慢）</h2>
+      <img src="/video_feed_annotated" width="640" height="480" />
+      <h2>跌倒狀態</h2>
+      <div id="fall" style="font-size:24px;color:red;">loading...</div>
+      <script>
+        async function poll(){
+          try{
+            const r = await fetch('/fall_status');
+            const j = await r.json();
+            document.getElementById('fall').innerText = j.status;
+          }catch(e){ console.error(e); }
+        }
+        setInterval(poll, 1000); poll();
+      </script>
+    </body>
+    </html>
+    """
+
+@app.route('/video_feed')
+def video_feed():
+    return Response(mjpeg_generator(get_raw),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/video_feed_annotated')
+def video_feed_annotated():
+    return Response(mjpeg_generator(get_annotated),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/fall_status')
+def fall_status():
+    return jsonify(status=fall_warning)
+
 # ─────── 主程式 ───────
 async def main():
     print("Gemini 多模態情緒感知助理啟動")
@@ -1178,14 +1219,14 @@ async def main():
             
         elif intent == 2:  # 記錄物品位置
             print("檢測到物品記錄語句，記錄中...")
-            await handle_item_input(user_input)  # 修正：加 await
+            await handle_item_input(user_input)
             print("物品記錄完成")
             reply = f"好的，我記住了你的{user_input.replace('放在', '放在').replace('放到', '放到')}"
             print(f"Gemini：{reply}")
             await save_chat_log(user_input, reply)
         elif intent == 3:  # 安排時程提醒
             print("檢測到行程安排語句，記錄中...")
-            handle_schedule_input(user_input)
+            await handle_schedule_input(user_input)
             print("行程安排完成")
             reply = f"好的，我已經幫你記錄了，到時候會提醒你喔！"
             print(f"Gemini：{reply}")
@@ -1193,19 +1234,16 @@ async def main():
             await play_response(reply) 
         elif intent == 4:  # 查詢物品位置
             print(" 檢測到物品查詢語句，查詢中...")
-            query_result = handle_item_query(user_input)
+            query_result = await handle_item_query(user_input)
             print(f"查詢結果：{query_result}")
             print(f"Gemini：{query_result}")
             await save_chat_log(user_input, query_result)
-            await play_response(query_result)  # Gemini語音播報查詢結果
-
+            await play_response(query_result)
             # 進入查找循環
             while True:
                 follow_up_q = "你有找到這個東西嗎？"
                 print(follow_up_q)
                 await play_response(follow_up_q)
-
-                # 語音輸入
                 recording_success = vad_record_audio()
                 if not recording_success:
                     continue
@@ -1213,12 +1251,10 @@ async def main():
                 if not follow_up:
                     continue
                 follow_up = follow_up.strip().lower()
-                # 新增：如果用戶說不用了、謝謝、不找了等，直接銜接一般聊天
                 if any(word in follow_up for word in ["不用", "不用了", "謝謝", "不找了", "算了", "沒關係", "no", "n"]):
                     msg = "好的，如果有其他需要，隨時告訴我。"
                     print(f"Gemini：{msg}")
                     await play_response(msg)
-                    # 銜接一般聊天
                     result = await chat_with_emotion(user_input, AUDIO_PATH)
                     print(f"Gemini：{result['reply']}")
                     break
@@ -1226,9 +1262,8 @@ async def main():
                     msg = "太好了！記得用完放回原位。如果還有其他需要，隨時告訴我。還有什麼我可以幫忙的嗎？"
                     print(f"Gemini：{msg}")
                     await play_response(msg)
-                    break  # 銜接一般聊天
+                    break
                 elif any(word in follow_up for word in ["沒有", "沒找到"]):
-                    # 再追問是否要建議其他地點
                     ask_more = "要不要我再幫你想想可能會放在哪裡？"
                     print(f"Gemini：{ask_more}")
                     await play_response(ask_more)
@@ -1239,7 +1274,6 @@ async def main():
                     if not more_reply:
                         continue
                     more_reply = more_reply.strip().lower()
-                    # 新增：如果用戶說不用了、謝謝、不找了等，直接銜接一般聊天
                     if any(word in more_reply for word in ["不用", "不用了", "謝謝", "不找了", "算了", "沒關係", "no", "n"]):
                         msg = "好的，如果有其他需要，隨時告訴我。"
                         print(f"Gemini：{msg}")
@@ -1248,35 +1282,35 @@ async def main():
                         print(f"Gemini：{result['reply']}")
                         break
                     if any(word in more_reply for word in ["好", "可以", "yes", "y"]):
-                        # 建議常見地點
                         suggestion = "你可以再去浴室、客廳、床頭櫃、廚房、書房等地方找找看。"
                         print(f"Gemini：{suggestion}")
                         await play_response(suggestion)
-                        # 會再回到 while 循環繼續問「有找到嗎」
                         continue
                     else:
-                        # 其他回答，繼續循環
                         continue
                 else:
                     msg = "好的，如果有需要隨時告訴我。"
                     print(f"Gemini：{msg}")
                     await play_response(msg)
                     break
-        elif intent == 5:  # 時間查詢 - 新增處理
+        elif intent == 5:  # 時間查詢
             print(" 檢測到時間查詢，本地處理中...")
             time_response = handle_time_query(user_input)
             print(f"Gemini：{time_response}")
             await save_chat_log(user_input, time_response)
-        else:  # 備用方案
+        else:
             result = await chat_with_emotion(user_input, AUDIO_PATH)
             print(f"Gemini：{result['reply']}")
             print(f"文字情緒：{result['text_emotion']}")
             print(f"語音情緒：{result['audio_emotion']}")
-        
-        print("\n" + "="*50)  # 分隔線
-            
+        print("\n" + "="*50)
     print("助理已關閉，再見！")
 
 if __name__ == "__main__":
     import asyncio
+    # 啟動跌倒偵測與 Socket 執行緒
+    t1 = threading.Thread(target=socket_server_thread, daemon=True); t1.start()
+    t2 = threading.Thread(target=fall_detection_thread, daemon=True); t2.start()
+    print("[*] Flask 伺服器啟動： http://0.0.0.0:5000")
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
     asyncio.run(main())
