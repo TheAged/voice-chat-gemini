@@ -355,6 +355,13 @@ async def tts_finished():
     asyncio.create_task(start_recording())
     return {"msg": "錄音開始"}
 
+@app.post("/api/stt_text/")
+async def stt_text(text: str = Body(...)):
+    # 這裡 text 就是凱比辨識好的語音文字
+    print("收到凱比STT文字：", text)
+    # 你可以在這裡直接進行意圖判斷、聊天等後續處理
+    return {"text": text}
+
 if __name__ == "__main__":
     uvicorn.run("api_server:app", host="0.0.0.0", port=8000)
 

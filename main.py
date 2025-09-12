@@ -1105,6 +1105,29 @@ def socket_server_thread():
                 except: pass
 
 # ======== 跌倒偵測執行緒 ========
+def call_emergency_contact():
+    # 發出警報聲，可改為實際撥打電話或通知
+    for _ in range(3):
+        play_system_beep()
+        print("⚠️ 警報：已觸發緊急求救！")
+        time.sleep(0.5)
+
+def ask_if_ok():
+    play_system_voice("你還好嗎？")
+    print("凱比：你還好嗎？")
+    print("等待使用者回應...")
+    # 最多等待 10 秒內有錄音回應
+    start_time = time.time()
+    reply = None
+    while time.time() - start_time < 10:
+        if vad_record_audio():
+            reply = transcribe_audio()
+            break
+        time.sleep(0.5)
+    danger_keywords = ["不太行", "站不起來", "救命", "幫忙", "痛", "無法起來"]
+    if (not reply) or any(word in (reply or "") for word in danger_keywords):
+        call_emergency_contact()
+
 def fall_detection_thread():
     global latest_frame_jpeg_annotated, fall_warning
     DETECT_INTERVAL = 0.12
@@ -1126,6 +1149,7 @@ def fall_detection_thread():
             fall_warning = "Fall Detected!" if fall_detected else "No Fall Detected"
             if fall_detected:
                 print("[INFO] 檢測到跌倒！")
+                ask_if_ok()
         except Exception as e:
             print(f"[!] 偵測錯誤：{e}")
 
