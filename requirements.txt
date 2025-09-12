@@ -15,6 +15,10 @@ python-dotenv>=1.0.0
 
 # 臉部辨識相關 (生產環境必須，開發環境可選)
 opencv-python>=4.7.0
+# 跌倒偵測相關
+imutils>=0.5.4
+pillow>=10.0.0
+mediapipe>=0.10.0
 fer>=22.5.1
 
 # 跨平台語音合成 (條件安裝)
