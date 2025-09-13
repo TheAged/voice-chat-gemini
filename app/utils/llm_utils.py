@@ -3,11 +3,10 @@ import time
 import re
 import emoji
 from datetime import datetime
+import os
 
-# 支援多組 Gemini API 金鑰，遇到限流自動切換
 API_KEYS = [
-    "第一組金鑰",  # 第一組金鑰
-    "第二組金鑰"   # 第二組金鑰
+    os.environ.get("GOOGLE_API_KEY")
 ]
 _api_idx = 0
 
