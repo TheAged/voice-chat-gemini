@@ -22,6 +22,7 @@ def safe_generate(prompt):
 # 初始化語音情緒辨識模型
 model_id = "firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3"
 audio_model = AutoModelForAudioClassification.from_pretrained(model_id)
+audio_model = audio_model.to('cuda')
 feature_extractor = AutoFeatureExtractor.from_pretrained(model_id, do_normalize=True)
 id2label = audio_model.config.id2label
 
@@ -93,6 +94,7 @@ def detect_audio_emotion(audio_path, max_duration=30.0):
 
         # 提取特徵
         inputs = feature_extractor(audio_array, sampling_rate=feature_extractor.sampling_rate, return_tensors="pt")
+        inputs = {k: v.to('cuda') for k, v in inputs.items()}
         with torch.no_grad():
             logits = audio_model(**inputs).logits
         predicted_id = torch.argmax(logits, dim=-1).item()
