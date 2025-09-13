@@ -50,7 +50,8 @@ async def chat_with_emotion(db, text, audio_path, multi_modal_emotion_detection,
         await save_chat_log(db, text, reply)
         await play_response(reply)
         return {"reply": reply, "intent": intent}
-    final_emotion, emotion_details = multi_modal_emotion_detection(
+    # 將 multi_modal_emotion_detection 呼叫加上 await
+    final_emotion, emotion_details = await multi_modal_emotion_detection(
         text=text,
         audio_path=audio_path if audio_path and audio_path != "test_audio.wav" else None,
         enable_facial=enable_facial
@@ -102,7 +103,7 @@ async def chat_with_emotion(db, text, audio_path, multi_modal_emotion_detection,
         "confidence": emotion_details.get("confidence_scores", {})
     }
     await save_emotion_log_enhanced(emotion_log)
-    record_daily_emotion(final_emotion)
+    await record_daily_emotion(final_emotion)
     await play_response(reply)
     return {
         "reply": reply,
