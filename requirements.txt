@@ -33,11 +33,12 @@ matplotlib>=3.7.0
 pytest>=7.4.0
 jupyter>=1.0.0
 
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-motor>=3.4.0
-passlib[bcrypt]>=1.7.4
-PyJWT>=2.8.0
+fastapi
+uvicorn
+beanie
+motor
+pydantic
+dotenv
 
 # 系統相關 (Windows 特定)
 # pywin32>=306  # 只在 Windows 環境需要，APK 打包時不需要

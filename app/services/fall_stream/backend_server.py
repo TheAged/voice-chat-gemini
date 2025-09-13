@@ -3,7 +3,8 @@ from flask import Flask, Response, jsonify
 import socket, struct, threading, time, traceback
 import cv2, numpy as np
 from collections import deque
-from app.services.fall_detection_service import handle_fall_event
+from fall_detection_1 import process_frame  # 回傳 (fall_detected, annotated_frame)
+from app.services.fall_detection_service import fall_warning as global_fall_warning
 
 app = Flask(__name__)
 
@@ -78,7 +79,7 @@ def socket_server_thread():
 
 # ======== 偵測執行緒（YOLO+Pose）========
 def fall_detection_thread():
-    global latest_frame_jpeg_annotated, fall_warning
+    global latest_frame_jpeg_annotated, fall_warning, global_fall_warning
     DETECT_INTERVAL = 0.12     # 約 8~10 FPS 推論
     last = 0.0
     while True:
@@ -88,7 +89,6 @@ def fall_detection_thread():
         if now - last < DETECT_INTERVAL:
             time.sleep(0.005); continue
         last = now
-
         frame = detect_queue.pop()  # 只處理最新
         try:
             fall_detected, annotated = process_frame(frame)
@@ -97,9 +97,9 @@ def fall_detection_thread():
                 with frame_lock:
                     latest_frame_jpeg_annotated = jpg.tobytes()
             fall_warning = "Fall Detected!" if fall_detected else "No Fall Detected"
+            global_fall_warning = fall_warning  # 同步到 FastAPI 狀態
             if fall_detected:
                 print("[INFO] 檢測到跌倒！")
-                handle_fall_event(frame)  # 新增：處理跌倒事件
         except Exception as e:
             print(f"[!] 偵測錯誤：{e}")
 
@@ -159,7 +159,7 @@ def video_feed_annotated():
 
 @app.route('/fall_status')
 def fall_status():
-    return jsonify(status=fall_warning)
+    return jsonify(status=global_fall_warning)
 
 # ======== 入口 ========
 if __name__ == '__main__':

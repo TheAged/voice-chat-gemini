@@ -34,6 +34,7 @@ latest_frame_jpeg_annotated = None
 frame_lock = threading.Lock()
 detect_queue = deque(maxlen=1)
 fall_warning = "No Fall Detected"
+alarm_active = False
 
 # ─────── 工具函式 ───────
 def clean_text_for_speech(text):
@@ -1106,11 +1107,21 @@ def socket_server_thread():
 
 # ======== 跌倒偵測執行緒 ========
 def call_emergency_contact():
+    global alarm_active
+    alarm_active = True
     # 發出警報聲，可改為實際撥打電話或通知
     for _ in range(3):
+        if not alarm_active:
+            break
         play_system_beep()
         print("⚠️ 警報：已觸發緊急求救！")
         time.sleep(0.5)
+
+def stop_alarm():
+    global alarm_active
+    if alarm_active:
+        alarm_active = False
+        print("✅ 警報已自動關閉（跌倒解除）")
 
 def ask_if_ok():
     play_system_voice("你還好嗎？")
@@ -1132,6 +1143,7 @@ def fall_detection_thread():
     global latest_frame_jpeg_annotated, fall_warning
     DETECT_INTERVAL = 0.12
     last = 0.0
+    prev_fall = False
     while True:
         if not detect_queue:
             time.sleep(0.01); continue
@@ -1147,9 +1159,12 @@ def fall_detection_thread():
                 with frame_lock:
                     latest_frame_jpeg_annotated = jpg.tobytes()
             fall_warning = "Fall Detected!" if fall_detected else "No Fall Detected"
-            if fall_detected:
+            if fall_detected and not prev_fall:
                 print("[INFO] 檢測到跌倒！")
                 ask_if_ok()
+            if not fall_detected and prev_fall:
+                stop_alarm()
+            prev_fall = fall_detected
         except Exception as e:
             print(f"[!] 偵測錯誤：{e}")
 
