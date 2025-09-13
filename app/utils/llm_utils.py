@@ -5,33 +5,18 @@ import emoji
 from datetime import datetime
 import os
 
-API_KEYS = [
-    os.environ.get("GOOGLE_API_KEY")
-]
-_api_idx = 0
-
 def get_model():
-    genai.configure(api_key=API_KEYS[_api_idx])
+    genai.configure(api_key="你的金鑰")
     return genai.GenerativeModel("gemini-2.0-flash")
 
 model = get_model()
 
 def safe_generate(prompt):
-    global _api_idx, model
-    for attempt in range(len(API_KEYS)):
-        try:
-            return model.generate_content(prompt).text.strip()
-        except Exception as e:
-            if "429" in str(e):
-                print(f"API KEY {_api_idx+1} 達到限流，切換下一組金鑰...")
-                _api_idx = (_api_idx + 1) % len(API_KEYS)
-                model = get_model()
-                continue
-            else:
-                print("呼叫錯誤：", e)
-                return None
-    print("所有 API 金鑰都被限流，請稍後再試。")
-    return None
+    try:
+        return model.generate_content(prompt).text.strip()
+    except Exception as e:
+        print("呼叫錯誤：", e)
+        return None
 
 def clean_text_for_speech(text):
     """清理文字以供語音合成使用，移除標點符號和表情符號"""
@@ -55,6 +40,8 @@ def clean_text_for_speech(text):
     return text
 
 def clean_text_from_stt(text):
+    if not text:
+        return ""
     text = emoji.replace_emoji(text, replace="")
     text = re.sub(r"[^\w\s\u4e00-\u9fff.,!?！？。]", "", text)
     return text.strip()
