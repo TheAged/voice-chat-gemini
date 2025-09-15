@@ -1,7 +1,61 @@
+# 核心依賴套件 (必須安裝)
+google-generativeai>=0.3.0
+transformers>=4.30.0
+torch>=2.0.0
+librosa>=0.10.0
 openai-whisper
-sounddevice
-scipy
-edge-tts
-google-generativeai
-emoji
-schedule
+sounddevice>=0.4.6
+scipy>=1.10.0
+flask>=2.3.0
+flask-cors>=4.0.0
+schedule>=1.2.0
+emoji>=2.2.0
+edge-tts>=6.1.0
+python-dotenv>=1.0.0
+
+# 臉部辨識相關 (生產環境必須，開發環境可選)
+opencv-python>=4.7.0
+# 跌倒偵測相關
+imutils>=0.5.4
+pillow>=10.0.0
+mediapipe>=0.10.0
+fer>=22.5.1
+
+# 跨平台語音合成 (條件安裝)
+pyttsx3>=2.90; platform_system=="Windows"
+
+# 數據處理和分析
+numpy>=1.24.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+
+# 開發和測試工具 (可選)
+pytest>=7.4.0
+jupyter>=1.0.0
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+motor>=3.4.0
+passlib[bcrypt]>=1.7.4
+PyJWT>=2.8.0
+beanie>=1.23.6
+
+# 系統相關 (Windows 特定)
+# pywin32>=306  # 只在 Windows 環境需要，APK 打包時不需要
+
+# APK 打包相關 (Android 部署時需要)
+# kivy>=2.2.0  # 如果使用 Kivy 開發 Android APP
+# buildozer>=1.5.0  # 用於打包 APK
+
+# 注意事項:
+# 1. 開發階段: 只需安裝核心依賴套件
+# 2. 測試階段: 可以跳過 opencv-python 和 fer，系統會自動使用模擬模式
+# 3. 生產部署: 需要安裝所有套件，特別是臉部辨識相關的
+# 4. Android APK: 需要特殊的編譯環境和套件版本
+
+# 安裝指令:
+# pip install -r requirements.txt
+# 
+# 或分階段安裝:
+# pip install google-generativeai transformers torch librosa openai-whisper sounddevice scipy flask flask-cors schedule emoji edge-tts
+# pip install opencv-python fer  # 生產環境追加
