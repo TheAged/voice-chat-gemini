@@ -10,6 +10,10 @@ client = AsyncIOMotorClient(MONGO_URL)
 db = client["homecare"]  # 假設你的資料庫名稱是 homecare
 
 # 初始化 MongoDB 連線
+from .schemas import User, Item, Schedule, ChatHistory, Emotion
+
 async def init_db():
-    # await init_beanie(database=db, document_models=[...])
-    pass
+    await init_beanie(
+        database=db,
+        document_models=[User, Item, Schedule, ChatHistory, Emotion]
+    )
