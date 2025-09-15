@@ -59,3 +59,32 @@ class Emotion(Document):
 
     class Settings:
         name = "emotions"
+
+# 新增每日情緒統計
+class DailyEmotionStat(Document):
+    user_id: str
+    date: str  # YYYY-MM-DD
+    emotions: List[str]
+    values: List[float]
+    avg_value: float
+    dominant_emotion: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Settings:
+        name = "daily_emotion_stats"
+
+# 新增每週情緒統計
+class WeeklyEmotionStat(Document):
+    user_id: str
+    week: str  # e.g. 2025-W37
+    week_start: str  # YYYY-MM-DD
+    week_end: str    # YYYY-MM-DD
+    daily_averages: List[float]
+    week_average: float
+    total_records: int
+    emotion_distribution: dict
+    timestamp: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Settings:
+        name = "weekly_emotion_stats"

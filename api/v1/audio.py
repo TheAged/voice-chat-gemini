@@ -12,8 +12,3 @@ async def transcribe(audio_file: UploadFile = File(...)):
     result = stt.transcribe(audio_bytes)
     return {"text": result}
 
-@router.post("/synthesize") #文字轉語音
-async def synthesize(text: str = Form(...)):
-    tts = TTSService()
-    audio_data = tts.synthesize(text)
-    return {"audio": audio_data}

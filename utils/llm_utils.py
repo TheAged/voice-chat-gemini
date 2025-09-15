@@ -6,7 +6,7 @@ from datetime import datetime
 import os
 
 def get_model():
-    genai.configure(api_key="你的金鑰")
+    genai.configure(api_key="AIzaSyBf74z_7TzUUmB1B3Co4CkBBHHgvpmVkA0")
     return genai.GenerativeModel("gemini-2.0-flash")
 
 model = get_model()
