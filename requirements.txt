@@ -39,6 +39,7 @@ motor>=3.4.0
 passlib[bcrypt]>=1.7.4
 PyJWT>=2.8.0
 beanie>=1.23.6
+email-validator>=2.0.0
 
 # 系統相關 (Windows 特定)
 # pywin32>=306  # 只在 Windows 環境需要，APK 打包時不需要
