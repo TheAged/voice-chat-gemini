@@ -4,7 +4,6 @@ from app.api.v1 import auth, chat, audio, items, schedules, emotions, webhooks, 
 
 from app.models.database import init_db
 from dotenv import load_dotenv
-
 load_dotenv()
 
 
@@ -24,6 +23,12 @@ app.include_router(schedules.router)
 app.include_router(emotions.router)
 app.include_router(webhooks.router)
 app.include_router(fall.router)
+
+
+# 新增首頁 / 路由，避免 404 Not Found
+@app.get("/")
+def root():
+    return {"message": "Welcome to Home Care Assistant API. See /docs for API documentation."}
 
 @app.get("/health")  # /health 路由就是用來確認 FastAPI 服務有正常啟動、可連線
 def health_check():
