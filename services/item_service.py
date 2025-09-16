@@ -1,26 +1,5 @@
 from datetime import datetime
 
-async def handle_item_input(db, text, safe_generate):
-    """
-    從文字中提取物品資訊並記錄到資料庫。
-    """
-    prompt = f"""請從下面這句話中擷取出下列資訊，用 JSON 格式回覆：\n- item：物品名稱\n- location：放置位置\n句子：「{text}」"""
-    reply = safe_generate(prompt)
-    if not reply:
-        print("Gemini 沒有回應，請稍後再試。")
-        return
-    if reply.startswith("```"):
-        reply = reply.strip("`").replace("json", "").strip()
-    import json
-    try:
-        data = json.loads(reply)
-    except:
-        print(f"回傳格式錯誤，無法解析：{reply}")
-        return
-    data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    await db.items.insert_one(data)
-    print(f"已記錄：「{data['item']}」放在 {data['location']}")
-
 async def handle_item_query(db, text, safe_generate):
     """
     從 MongoDB 查詢物品位置，主動建議可能地點
