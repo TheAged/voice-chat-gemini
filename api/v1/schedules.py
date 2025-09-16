@@ -4,6 +4,7 @@ from app.models.database import db
 from app.utils.llm_utils import safe_generate
 from app.utils.validators import parse_relative_time
 from datetime import datetime
+from bson import ObjectId 
 
 router = APIRouter(tags=["schedules"])
 
@@ -39,9 +40,10 @@ async def get_schedules_no_slash():
 
 @router.put("/{schedule_id}")
 async def update_schedule(schedule_id: str, text: str = Form(...)):
-    from app.utils.validators import parse_relative_time
-    from app.utils.llm_utils import safe_generate
-    from app.services.schedule_service import handle_schedule_input
+    try:
+        oid = ObjectId(schedule_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid schedule_id")
     # 解析新內容
     parsed_time = parse_relative_time(text)
     prompt = f"""
@@ -54,10 +56,20 @@ async def update_schedule(schedule_id: str, text: str = Form(...)):
     except:
         return {"msg": "解析失敗"}
     data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    result = await db.schedules.update_one({"_id": schedule_id}, {"$set": data})
+    result = await db.schedules.update_one({"_id": oid}, {"$set": data})
     return {"msg": "行程已更新", "result": str(result.modified_count)}
 
 @router.delete("/{schedule_id}")
 async def delete_schedule(schedule_id: str):
-    result = await db.schedules.delete_one({"_id": schedule_id})
-    return {"msg": "行程已刪除", "result": str(result.deleted_count)}
+    try:
+        oid = ObjectId(schedule_id)   # ★ 轉型
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid schedule_id")
+
+    result = await db.schedules.delete_one({"_id": oid})
+
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+
+    return {"msg": "行程已刪除", "deleted": result.deleted_count}
+
