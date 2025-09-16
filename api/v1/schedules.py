@@ -61,5 +61,3 @@ async def update_schedule(schedule_id: str, text: str = Form(...)):
 async def delete_schedule(schedule_id: str):
     result = await db.schedules.delete_one({"_id": schedule_id})
     return {"msg": "行程已刪除", "result": str(result.deleted_count)}
-
-
