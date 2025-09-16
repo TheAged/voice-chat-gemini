@@ -1,10 +1,21 @@
-import logging
+from beanie import init_beanie
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
+from dotenv import load_dotenv
+from app.utils.logger import logger
 
-# 建立一個 logger 物件，名稱為 homecare
-logger = logging.getLogger("homecare")
+load_dotenv()
 
-# 設定日誌格式與等級
-logging.basicConfig(
-    format='%(asctime)s %(levelname)s %(name)s %(message)s',  # 日誌格式
-    level=logging.INFO  # 日誌等級：INFO
-)
+MONGO_URL = os.environ.get("MONGO_URL", "")
+client = AsyncIOMotorClient(MONGO_URL)
+db = client["userdb"]  # 實際資料庫名稱
+
+# 初始化 MongoDB 連線
+from .schemas import User, Item, Schedule, ChatHistory, Emotion, DailyEmotionStat, WeeklyEmotionStat
+
+async def init_db():
+    await init_beanie(
+        database=db,
+        document_models=[User, Item, Schedule, ChatHistory, Emotion, DailyEmotionStat, WeeklyEmotionStat]
+    )
+    logger.info("資料庫連線成功")
