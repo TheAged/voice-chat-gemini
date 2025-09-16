@@ -41,9 +41,15 @@ def detect_user_intent(text):
     return 1
 
 def parse_relative_time(text):
-    """解析相對時間並轉換為具體時間"""
-    from datetime import datetime, timedelta
+    # 新增：直接解析 YYYY-MM-DD HH:MM 格式
     import re
+    from datetime import datetime, timedelta
+    match = re.match(r"(\d{4}-\d{2}-\d{2})[\sT](\d{2}:\d{2})", text)
+    if match:
+        try:
+            return datetime.strptime(match.group(1) + " " + match.group(2), "%Y-%m-%d %H:%M").strftime("%Y-%m-%d %H:%M")
+        except:
+            pass
     now = datetime.now()
     chinese_num_map = {
         '零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
