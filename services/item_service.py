@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 
 async def handle_item_query(db, text, safe_generate):
     """
@@ -43,3 +44,17 @@ async def handle_item_query(db, text, safe_generate):
             f"我沒有找到「{item_name}」的記錄。你可以去{suggestion}等常用地方找找看喔！"
             "如果你有找到並換地方放，記得跟我說一聲，我會幫你記下來。"
         )
+
+async def handle_item_input(db, text, safe_generate):
+    # 解析 text 格式：物品名稱：xxx；地點：a、b、c
+    name_match = re.search(r'物品名稱[:：]\s*([^；]+)', text)
+    places_match = re.search(r'地點[:：]\s*([^；]+)', text)
+    name = name_match.group(1).strip() if name_match else ''
+    places = places_match.group(1).split('、') if places_match else []
+    data = {
+        'name': name,
+        'places': [p.strip() for p in places if p.strip()],
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    await db.items.insert_one(data)
+    print(f"已新增物品：{name}，地點：{data['places']}")
