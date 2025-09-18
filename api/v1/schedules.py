@@ -72,4 +72,3 @@ async def delete_schedule(schedule_id: str):
         raise HTTPException(status_code=404, detail="Schedule not found")
 
     return {"msg": "行程已刪除", "deleted": result.deleted_count}
-
