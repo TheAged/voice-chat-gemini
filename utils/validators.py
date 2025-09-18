@@ -41,10 +41,10 @@ def detect_user_intent(text):
     return 1
 
 def parse_relative_time(text):
-    # 新增：直接解析 YYYY-MM-DD HH:MM 格式
+    # 修正：搜尋整個字串的 YYYY-MM-DD HH:MM 格式
     import re
     from datetime import datetime, timedelta
-    match = re.match(r"(\d{4}-\d{2}-\d{2})[\sT](\d{2}:\d{2})", text)
+    match = re.search(r"(\d{4}-\d{2}-\d{2})[\sT](\d{2}:\d{2})", text)
     if match:
         try:
             return datetime.strptime(match.group(1) + " " + match.group(2), "%Y-%m-%d %H:%M").strftime("%Y-%m-%d %H:%M")
