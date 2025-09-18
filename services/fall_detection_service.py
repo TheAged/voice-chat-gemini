@@ -1,6 +1,13 @@
+import time
+
 # 跌倒偵測與警報相關服務
 
 fall_warning = "No Fall Detected"
+
+current_fall_status = {
+    "fall": False,
+    "ts": int(time.time())
+}
 
 def process_frame(frame):
     # 這裡可呼叫原本的跌倒偵測邏輯
@@ -42,3 +49,7 @@ def handle_fall_event():
         # 這裡可呼叫凱比 TTS 播報歡迎語
         # 例如：send_text_to_kebbi("你沒事就好，喔？我們剛剛聊到哪了?")
         pass
+
+def update_fall_status(is_fall: bool):
+    current_fall_status["fall"] = is_fall
+    current_fall_status["ts"] = int(time.time())
