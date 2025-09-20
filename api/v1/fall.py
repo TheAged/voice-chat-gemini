@@ -202,48 +202,58 @@ async def video_feed():
     import httpx
     
     async def generate_frames():
-        # 首先嘗試連接樹莓派的實際串流
-        stream_urls = [
-            'http://100.66.243.67/stream.mjpg',           # 原始串流
-            'http://100.66.243.67/stream_processed.mjpg', # 處理後串流
-        ]
-        
-        # 嘗試連接樹莓派串流
-        for url in stream_urls:
-            try:
-                logger.info(f"嘗試連接樹莓派實際串流: {url}")
-                
-                async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(10.0, connect=5.0),
-                    follow_redirects=True
-                ) as client:
-                    async with client.stream(
-                        'GET', 
-                        url,
-                        headers={
-                            'User-Agent': 'Fall-Detection-WebApp/1.0',
-                            'Accept': 'multipart/x-mixed-replace,image/jpeg,image/*'
-                        }
-                    ) as response:
-                        if response.status_code == 200:
-                            logger.info(f"成功連接樹莓派實際串流: {url}")
-                            
-                            # 直接轉發樹莓派的串流
-                            async for chunk in response.aiter_bytes(8192):
-                                if chunk:
-                                    yield chunk
-                            return  # 如果串流結束，退出函數
-                        else:
-                            logger.warning(f"樹莓派串流回應錯誤 {url}: {response.status_code}")
-                            
-            except Exception as e:
-                logger.error(f"無法連接樹莓派串流 {url}: {e}")
-                continue
-        
-        # 如果無法連接樹莓派，生成提示影像
-        logger.warning("無法連接樹莓派，顯示連線狀態影像")
-        
         try:
+            # 首先嘗試連接樹莓派的實際串流
+            stream_urls = [
+                'http://100.66.243.67/stream.mjpg',           # 原始串流
+                'http://100.66.243.67/stream_processed.mjpg', # 處理後串流
+            ]
+            
+            # 嘗試連接樹莓派串流
+            for url in stream_urls:
+                try:
+                    logger.info(f"嘗試連接樹莓派實際串流: {url}")
+                    
+                    async with httpx.AsyncClient(
+                        timeout=httpx.Timeout(10.0, connect=5.0),
+                        follow_redirects=True
+                    ) as client:
+                        async with client.stream(
+                            'GET', 
+                            url,
+                            headers={
+                                'User-Agent': 'Fall-Detection-WebApp/1.0',
+                                'Accept': 'multipart/x-mixed-replace,image/jpeg,image/*'
+                            }
+                        ) as response:
+                            if response.status_code == 200:
+                                logger.info(f"成功連接樹莓派實際串流: {url}")
+                                
+                                # 直接轉發樹莓派的串流
+                                try:
+                                    async for chunk in response.aiter_bytes(8192):
+                                        if chunk:
+                                            yield chunk
+                                except asyncio.CancelledError:
+                                    logger.info("樹莓派串流被客戶端取消")
+                                    return
+                                except Exception as e:
+                                    logger.error(f"樹莓派串流傳輸錯誤: {e}")
+                                    break
+                                return  # 如果串流結束，退出函數
+                            else:
+                                logger.warning(f"樹莓派串流回應錯誤 {url}: {response.status_code}")
+                                
+                except asyncio.CancelledError:
+                    logger.info("連接樹莓派時被取消")
+                    return
+                except Exception as e:
+                    logger.error(f"無法連接樹莓派串流 {url}: {e}")
+                    continue
+            
+            # 如果無法連接樹莓派，生成提示影像
+            logger.warning("無法連接樹莓派，顯示連線狀態影像")
+            
             frame_count = 0
             start_time = time.time()
             
@@ -264,7 +274,7 @@ async def video_feed():
                     cv2.putText(img, f"Attempting: {frame_count % 2 and 'stream.mjpg' or 'stream_processed.mjpg'}", 
                               (50, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                     
-                    cv2.putText(img, f"Retry in: {5 - (frame_count % 5)}s", (50, 200), 
+                    cv2.putText(img, f"Retry in: {5 - (frame_count % 150) // 30}s", (50, 200), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                     
                     # 跌倒狀態顯示
@@ -288,10 +298,8 @@ async def video_feed():
                     # 每5秒重新嘗試連接
                     if frame_count % 150 == 0 and frame_count > 0:  # 5秒 * 30fps = 150 frames
                         logger.info("重新嘗試連接樹莓派...")
-                        # 遞歸調用自己來重新嘗試
-                        async for new_frame in generate_frames():
-                            yield new_frame
-                        return
+                        # 重新開始，而不是遞歸調用
+                        break
                     
                     # 將影像編碼為 JPEG
                     ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -307,10 +315,16 @@ async def video_feed():
                     frame_count += 1
                     await asyncio.sleep(0.033)  # 約 30 FPS
                     
+                except asyncio.CancelledError:
+                    logger.info("影像生成被取消")
+                    return
                 except Exception as e:
                     logger.error(f"影像生成錯誤: {e}")
                     await asyncio.sleep(1)
                     
+        except asyncio.CancelledError:
+            logger.info("影像串流被取消")
+            return
         except Exception as e:
             logger.error(f"影像串流錯誤: {e}")
     
@@ -434,6 +448,22 @@ async def get_fall_history_public(limit: int = Query(30, description="限制返�
     """公開跌倒歷史記錄端點 - 無需認證"""
     return await get_api_fall_history(limit)
 
+# 添加更多歷史記錄端點別名
+@router.get("/api/api/fall_history")
+async def get_api_api_fall_history(limit: int = Query(30, description="限制返回的記錄數量")):
+    """處理重複 API 路徑的歷史記錄端點"""
+    return await get_api_fall_history(limit)
+
+@router.get("/api/history")
+async def get_api_history(limit: int = Query(30, description="限制返回的記錄數量")):
+    """API 歷史記錄端點別名"""
+    return await get_api_fall_history(limit)
+
+@router.get("/fall/history")
+async def get_fall_slash_history(limit: int = Query(30, description="限制返回的記錄數量")):
+    """Fall 歷史記錄端點別名"""
+    return await get_api_fall_history(limit)
+
 @router.get("/")
 async def root():
     """根路徑 - 移除認證要求"""
@@ -502,82 +532,99 @@ async def video_proxy():
     import httpx
     
     async def proxy_stream():
-        # 根據樹莓派實際的 API 端點結構更新 URL
-        stream_urls = [
-            'http://100.66.243.67/stream.mjpg',           # 原始串流
-            'http://100.66.243.67/stream_processed.mjpg', # 處理後串流  
-            'http://100.66.243.67/video_feed',
-            'http://100.66.243.67/mjpg_stream',
-        ]
-        
-        for url in stream_urls:
-            retry_count = 0
-            max_retries = 2
+        try:
+            # 根據樹莓派實際的 API 端點結構更新 URL
+            stream_urls = [
+                'http://100.66.243.67/stream.mjpg',           # 原始串流
+                'http://100.66.243.67/stream_processed.mjpg', # 處理後串流  
+                'http://100.66.243.67/video_feed',
+                'http://100.66.243.67/mjpg_stream',
+            ]
             
-            while retry_count < max_retries:
+            for url in stream_urls:
+                retry_count = 0
+                max_retries = 2
+                
+                while retry_count < max_retries:
+                    try:
+                        logger.info(f"嘗試連接樹莓派攝影機串流 (第 {retry_count + 1} 次) - URL: {url}")
+                        
+                        async with httpx.AsyncClient(
+                            timeout=httpx.Timeout(30.0, connect=10.0),
+                            follow_redirects=True
+                        ) as client:
+                            async with client.stream(
+                                'GET', 
+                                url,
+                                headers={
+                                    'User-Agent': 'Fall-Detection-Proxy/1.0',
+                                    'Accept': 'multipart/x-mixed-replace,image/jpeg,image/*'
+                                }
+                            ) as response:
+                                if response.status_code == 200:
+                                    logger.info(f"成功連接到樹莓派攝影機串流: {url}")
+                                    try:
+                                        async for chunk in response.aiter_bytes(8192):
+                                            if chunk:
+                                                yield chunk
+                                    except asyncio.CancelledError:
+                                        logger.info("代理串流被取消")
+                                        return
+                                    return  # 成功連接，結束函數
+                                else:
+                                    logger.warning(f"樹莓派攝影機回應錯誤 {url}: {response.status_code}")
+                                    raise httpx.RequestError(f"HTTP {response.status_code}")
+                                    
+                    except asyncio.CancelledError:
+                        logger.info("連接被取消")
+                        return
+                    except Exception as e:
+                        logger.error(f"攝影機連線錯誤 {url} (嘗試 {retry_count + 1}/{max_retries}): {e}")
+                        retry_count += 1
+                        
+                        if retry_count < max_retries:
+                            await asyncio.sleep(retry_count * 2)
+                        else:
+                            break
+            
+            # 所有 URL 都失敗，生成錯誤影像
+            logger.error("所有樹莓派串流 URL 都連線失敗")
+            while True:
                 try:
-                    logger.info(f"嘗試連接樹莓派攝影機串流 (第 {retry_count + 1} 次) - URL: {url}")
+                    img = np.zeros((480, 640, 3), dtype=np.uint8)
+                    cv2.putText(img, "Camera Connection Failed", (80, 140), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                    cv2.putText(img, f"Target: 100.66.243.67", (80, 180), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    cv2.putText(img, "Tried endpoints:", (80, 220), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+                    cv2.putText(img, "- /stream.mjpg", (80, 250), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+                    cv2.putText(img, "- /stream_processed.mjpg", (80, 280), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+                    cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (80, 320), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                     
-                    async with httpx.AsyncClient(
-                        timeout=httpx.Timeout(30.0, connect=10.0),
-                        follow_redirects=True
-                    ) as client:
-                        async with client.stream(
-                            'GET', 
-                            url,
-                            headers={
-                                'User-Agent': 'Fall-Detection-Proxy/1.0',
-                                'Accept': 'multipart/x-mixed-replace,image/jpeg,image/*'
-                            }
-                        ) as response:
-                            if response.status_code == 200:
-                                logger.info(f"成功連接到樹莓派攝影機串流: {url}")
-                                async for chunk in response.aiter_bytes(8192):
-                                    if chunk:
-                                        yield chunk
-                                return  # 成功連接，結束函數
-                            else:
-                                logger.warning(f"樹莓派攝影機回應錯誤 {url}: {response.status_code}")
-                                raise httpx.RequestError(f"HTTP {response.status_code}")
-                                
+                    ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    if ret:
+                        frame = buffer.tobytes()
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                    
+                    await asyncio.sleep(1)
+                    
+                except asyncio.CancelledError:
+                    logger.info("錯誤影像生成被取消")
+                    return
                 except Exception as e:
-                    logger.error(f"攝影機連線錯誤 {url} (嘗試 {retry_count + 1}/{max_retries}): {e}")
-                    retry_count += 1
+                    logger.error(f"生成錯誤影像失敗: {e}")
+                    await asyncio.sleep(5)
                     
-                    if retry_count < max_retries:
-                        await asyncio.sleep(retry_count * 2)
-                    else:
-                        break
-        
-        # 所有 URL 都失敗，生成錯誤影像
-        logger.error("所有樹莓派串流 URL 都連線失敗")
-        while True:
-            try:
-                img = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(img, "Camera Connection Failed", (80, 140), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                cv2.putText(img, f"Target: 100.66.243.67", (80, 180), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                cv2.putText(img, "Tried endpoints:", (80, 220), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-                cv2.putText(img, "- /stream.mjpg", (80, 250), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-                cv2.putText(img, "- /stream_processed.mjpg", (80, 280), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-                cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (80, 320), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                
-                ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                if ret:
-                    frame = buffer.tobytes()
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-                
-                await asyncio.sleep(1)
-                
-            except Exception as e:
-                logger.error(f"生成錯誤影像失敗: {e}")
-                await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            logger.info("代理串流被取消")
+            return
+        except Exception as e:
+            logger.error(f"代理串流錯誤: {e}")
     
     return StreamingResponse(
         proxy_stream(),
