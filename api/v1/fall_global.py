@@ -243,8 +243,25 @@ async def api_video_proxy():
                 cv2.putText(img, "- /stream.mjpg", (80, 250), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
                 cv2.putText(img, "- /stream_processed.mjpg", (80, 280), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+                cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (80, 320), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                
+                ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if ret:
+                    frame = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                logger.error(f"生成錯誤影像失敗: {e}")
+                await asyncio.sleep(5)
+    
+    return StreamingResponse(
+        proxy_stream(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache", 
