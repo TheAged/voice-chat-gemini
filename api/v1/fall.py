@@ -67,7 +67,8 @@ async def get_user_optional(
         return InternalUser()
 
 @router.get("/fall_status")
-async def get_fall_status(current_user: User = Depends(get_current_user)):
+async def get_fall_status():
+    """跌倒狀態端點 - 移除認證要求"""
     return current_fall_status
 
 # 移除重複的 /status 路由，只保留一個無認證版本
@@ -190,8 +191,8 @@ async def sse_events(request: Request, current_user: User = Depends(get_current_
     )
 
 @router.get("/video_feed")
-async def video_feed(current_user: User = Depends(get_user_for_stream)):
-    """影像串流端點 - 支援多種認證方式"""
+async def video_feed():
+    """影像串流端點 - 移除認證要求"""
     async def generate_frames():
         try:
             frame_count = 0
@@ -208,9 +209,7 @@ async def video_feed(current_user: User = Depends(get_user_for_stream)):
                     cv2.putText(img, f"Fall Detection Camera", (50, 50), 
                               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
                     
-                    # 顯示用戶名稱（如果有的話）
-                    username = getattr(current_user, 'username', getattr(current_user, 'email', 'Unknown'))
-                    cv2.putText(img, f"User: {username}", (50, 120), 
+                    cv2.putText(img, f"No Auth Required", (50, 120), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
                     
                     cv2.putText(img, f"Frame: {frame_count}", (50, 160), 
@@ -378,7 +377,8 @@ async def get_fall_history_public(limit: int = Query(30, description="限制返�
     return await get_api_fall_history(limit)
 
 @router.get("/")
-async def root(current_user: User = Depends(get_current_user)):
+async def root():
+    """根路徑 - 移除認證要求"""
     return current_fall_status
 
 # 添加健康檢查端點，無需認證
@@ -424,8 +424,8 @@ async def catch_all_fall_status(path: str):
         raise HTTPException(status_code=404, detail=f"路徑 {path} 不存在")
 
 @router.get("/video_proxy")
-async def video_proxy(current_user: User = Depends(get_user_for_stream)):
-    """代理遠端影像串流以解決混合內容問題"""
+async def video_proxy():
+    """代理遠端影像串流以解決混合內容問題 - 移除認證要求"""
     import httpx
     
     async def proxy_stream():
@@ -434,7 +434,7 @@ async def video_proxy(current_user: User = Depends(get_user_for_stream)):
         
         while retry_count < max_retries:
             try:
-                logger.info(f"嘗試連接樹莓派攝影機串流 (第 {retry_count + 1} 次)")
+                logger.info(f"嘗試連接樹莓派攝影機串流 (第 {retry_count + 1} 次) - IP: 100.66.243.67")
                 
                 async with httpx.AsyncClient(
                     timeout=httpx.Timeout(30.0, connect=10.0),
@@ -442,7 +442,7 @@ async def video_proxy(current_user: User = Depends(get_user_for_stream)):
                 ) as client:
                     async with client.stream(
                         'GET', 
-                        'http://100.66.243.67/api/fall/video_feed',  # 更新為正確的樹莓派 IP
+                        'http://100.66.243.67/api/v1/fall/video_feed',  # 確保使用正確的樹莓派 IP 和完整路徑
                         headers={
                             'User-Agent': 'Fall-Detection-Proxy/1.0',
                             'Accept': 'multipart/x-mixed-replace,image/*'
@@ -470,11 +470,13 @@ async def video_proxy(current_user: User = Depends(get_user_for_stream)):
         while True:
             try:
                 img = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(img, "Camera Connection Failed", (80, 200), 
+                cv2.putText(img, "Camera Connection Failed", (80, 180), 
                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                cv2.putText(img, f"Target: 100.66.243.67", (80, 240),  # 更新 IP 顯示
+                cv2.putText(img, f"Target: 100.66.243.67", (80, 220), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (80, 280), 
+                cv2.putText(img, "Please check Raspberry Pi", (80, 260), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (80, 300), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 
                 ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -488,3 +490,63 @@ async def video_proxy(current_user: User = Depends(get_user_for_stream)):
             except Exception as e:
                 logger.error(f"生成錯誤影像失敗: {e}")
                 await asyncio.sleep(5)
+    
+    return StreamingResponse(
+        proxy_stream(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache", 
+            "Expires": "0",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*"
+        }
+    )
+
+# 添加樹莓派連線測試端點
+@router.get("/test_raspberry_pi")
+async def test_raspberry_pi():
+    """測試樹莓派連線狀態"""
+    import httpx
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # 測試多個可能的端點
+            test_urls = [
+                'http://100.66.243.67/health',
+                'http://100.66.243.67/api/v1/fall/health',
+                'http://100.66.243.67/api/fall/health',
+                'http://100.66.243.67/',
+            ]
+            
+            results = []
+            for url in test_urls:
+                try:
+                    response = await client.get(url)
+                    results.append({
+                        "url": url,
+                        "status": response.status_code,
+                        "accessible": True,
+                        "response_size": len(response.content)
+                    })
+                except Exception as e:
+                    results.append({
+                        "url": url,
+                        "status": None,
+                        "accessible": False,
+                        "error": str(e)
+                    })
+            
+            return {
+                "raspberry_pi_ip": "100.66.243.67",
+                "test_time": int(time.time()),
+                "test_results": results
+            }
+            
+    except Exception as e:
+        return {
+            "raspberry_pi_ip": "100.66.243.67",
+            "test_time": int(time.time()),
+            "error": str(e),
+            "accessible": False
+        }
