@@ -202,6 +202,8 @@ async def video_feed():
     import httpx
     
     async def generate_frames():
+        connection_attempts = []
+        
         try:
             # 首先嘗試連接樹莓派的實際串流
             stream_urls = [
@@ -213,6 +215,7 @@ async def video_feed():
             for url in stream_urls:
                 try:
                     logger.info(f"嘗試連接樹莓派實際串流: {url}")
+                    connection_attempts.append(f"正在嘗試: {url}")
                     
                     async with httpx.AsyncClient(
                         timeout=httpx.Timeout(10.0, connect=5.0),
@@ -227,7 +230,8 @@ async def video_feed():
                             }
                         ) as response:
                             if response.status_code == 200:
-                                logger.info(f"成功連接樹莓派實際串流: {url}")
+                                logger.info(f"✅ 成功連接樹莓派實際串流: {url}")
+                                connection_attempts.append(f"✅ 成功連接: {url}")
                                 
                                 # 直接轉發樹莓派的串流
                                 try:
@@ -239,65 +243,98 @@ async def video_feed():
                                     return
                                 except Exception as e:
                                     logger.error(f"樹莓派串流傳輸錯誤: {e}")
+                                    connection_attempts.append(f"❌ 傳輸錯誤: {str(e)}")
                                     break
                                 return  # 如果串流結束，退出函數
                             else:
-                                logger.warning(f"樹莓派串流回應錯誤 {url}: {response.status_code}")
+                                error_msg = f"HTTP {response.status_code}"
+                                logger.warning(f"❌ 樹莓派串流回應錯誤 {url}: {error_msg}")
+                                connection_attempts.append(f"❌ HTTP錯誤 {url}: {error_msg}")
                                 
                 except asyncio.CancelledError:
                     logger.info("連接樹莓派時被取消")
                     return
+                except httpx.ConnectTimeout as e:
+                    error_msg = f"連接超時: {str(e)}"
+                    logger.error(f"❌ 樹莓派連接超時 {url}: {error_msg}")
+                    connection_attempts.append(f"❌ 連接超時 {url}: {error_msg}")
+                    continue
+                except httpx.ReadTimeout as e:
+                    error_msg = f"讀取超時: {str(e)}"
+                    logger.error(f"❌ 樹莓派讀取超時 {url}: {error_msg}")
+                    connection_attempts.append(f"❌ 讀取超時 {url}: {error_msg}")
+                    continue
+                except httpx.ConnectError as e:
+                    error_msg = f"連接拒絕: {str(e)}"
+                    logger.error(f"❌ 樹莓派連接拒絕 {url}: {error_msg}")
+                    connection_attempts.append(f"❌ 連接拒絕 {url}: {error_msg}")
+                    continue
                 except Exception as e:
-                    logger.error(f"無法連接樹莓派串流 {url}: {e}")
+                    error_msg = f"未知錯誤: {str(e)}"
+                    logger.error(f"❌ 無法連接樹莓派串流 {url}: {error_msg}")
+                    connection_attempts.append(f"❌ 連接失敗 {url}: {error_msg}")
                     continue
             
-            # 如果無法連接樹莓派，生成提示影像
-            logger.warning("無法連接樹莓派，顯示連線狀態影像")
+            # 如果無法連接樹莓派，生成詳細的診斷影像
+            logger.warning("❌ 無法連接樹莓派，顯示診斷影像")
             
             frame_count = 0
             start_time = time.time()
             
             while True:
                 try:
-                    # 生成連線狀態影像
-                    img = np.zeros((480, 640, 3), dtype=np.uint8)
+                    # 生成診斷影像
+                    img = np.zeros((600, 800, 3), dtype=np.uint8)  # 增加畫布大小
                     
                     # 添加背景
-                    cv2.rectangle(img, (0, 0), (640, 80), (50, 50, 50), -1)
+                    cv2.rectangle(img, (0, 0), (800, 80), (50, 50, 50), -1)
                     
-                    cv2.putText(img, f"Connecting to Raspberry Pi...", (50, 50), 
+                    cv2.putText(img, f"Raspberry Pi Connection Failed", (50, 50), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
                     
-                    cv2.putText(img, f"Target: 100.66.243.67", (50, 120), 
+                    cv2.putText(img, f"Target: 100.66.243.67", (50, 100), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
                     
-                    cv2.putText(img, f"Attempting: {frame_count % 2 and 'stream.mjpg' or 'stream_processed.mjpg'}", 
-                              (50, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    # 顯示連接嘗試歷史
+                    y_pos = 140
+                    cv2.putText(img, "Connection Attempts:", (50, y_pos), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
                     
-                    cv2.putText(img, f"Retry in: {5 - (frame_count % 150) // 30}s", (50, 200), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    for i, attempt in enumerate(connection_attempts[-6:]):  # 只顯示最近6次嘗試
+                        y_pos += 30
+                        color = (0, 255, 0) if "✅" in attempt else (0, 0, 255)
+                        # 截斷過長的文字
+                        display_text = attempt[:60] + "..." if len(attempt) > 60 else attempt
+                        cv2.putText(img, display_text, (70, y_pos), 
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                    
+                    # 顯示重試資訊
+                    retry_in = 5 - (frame_count % 150) // 30
+                    cv2.putText(img, f"Next retry in: {retry_in}s", (50, y_pos + 60), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                     
                     # 跌倒狀態顯示
                     fall_status = current_fall_status.get('fall', False)
                     status_text = 'FALL DETECTED' if fall_status else 'NORMAL'
                     status_color = (0, 0, 255) if fall_status else (0, 255, 0)
                     
-                    cv2.putText(img, f"Fall Status: {status_text}", (50, 240), 
+                    cv2.putText(img, f"Fall Status: {status_text}", (50, y_pos + 100), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
                     
                     if fall_status:
                         # 跌倒警告效果
-                        cv2.rectangle(img, (30, 260), (610, 300), (0, 0, 255), 3)
-                        cv2.putText(img, "EMERGENCY ALERT!", (50, 285), 
+                        cv2.rectangle(img, (30, y_pos + 120), (770, y_pos + 160), (0, 0, 255), 3)
+                        cv2.putText(img, "EMERGENCY ALERT!", (50, y_pos + 145), 
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                     
                     # 時間戳記
-                    cv2.putText(img, f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}", (50, 320), 
+                    cv2.putText(img, f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}", (50, y_pos + 180), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                     
                     # 每5秒重新嘗試連接
                     if frame_count % 150 == 0 and frame_count > 0:  # 5秒 * 30fps = 150 frames
-                        logger.info("重新嘗試連接樹莓派...")
+                        logger.info("🔄 重新嘗試連接樹莓派...")
+                        connection_attempts.append(f"🔄 重試 {time.strftime('%H:%M:%S')}")
                         # 重新開始，而不是遞歸調用
                         break
                     
