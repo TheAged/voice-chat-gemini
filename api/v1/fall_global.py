@@ -284,19 +284,20 @@ async def api_video_proxy():
 async def api_fall_history(limit: int = Query(30, description="限制返回的記錄數量")):
     """全局歷史記錄端點 - 無需認證"""
     try:
-        history_data = []
         current_time = int(time.time())
         
-        # 生成模擬歷史資料
-        for i in range(min(limit, 15)):  # 返回更多資料
-            history_data.append({
+        # 快速生成歷史資料
+        history_data = [
+            {
                 "id": i + 1,
-                "fall_detected": i % 4 == 0,  # 每4筆有一筆跌倒記錄
-                "timestamp": current_time - (i * 1800),  # 每半小時一筆記錄
+                "fall_detected": i % 4 == 0,
+                "timestamp": current_time - (i * 1800),
                 "confidence": 0.88 if i % 4 == 0 else 0.15,
                 "location": ["客廳", "臥室", "廚房", "浴室"][i % 4],
-                "source": "raspberry_pi"
-            })
+                "source": "global_service"
+            }
+            for i in range(min(limit, 8))
+        ]
         
         return JSONResponse(
             content={
@@ -313,7 +314,7 @@ async def api_fall_history(limit: int = Query(30, description="限制返回的�
         return JSONResponse(
             content={
                 "status": "error",
-                "message": "無法獲取歷史記錄",
+                "message": "服務暫時不可用",
                 "data": [],
                 "total": 0
             },
@@ -323,4 +324,14 @@ async def api_fall_history(limit: int = Query(30, description="限制返回的�
 @global_fall_router.get("/fall_history") 
 async def fall_history_alias(limit: int = Query(30, description="限制返回的記錄數量")):
     """歷史記錄別名端點"""
+    return await api_fall_history(limit)
+
+@global_fall_router.get("/history")
+async def history_alias(limit: int = Query(30, description="限制返回的記錄數量")):
+    """歷史記錄簡短別名端點"""
+    return await api_fall_history(limit)
+
+@global_fall_router.get("/api/history")
+async def api_history_alias(limit: int = Query(30, description="限制返回的記錄數量")):
+    """API 歷史記錄別名端點"""
     return await api_fall_history(limit)
