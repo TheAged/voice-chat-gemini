@@ -98,71 +98,80 @@ async def root():
 # 添加影像串流端點 - 直接對應前端請求的路徑
 @global_fall_router.get("/api/video_feed")
 async def api_video_feed():
-    """全局影像串流端點 - 無需認證"""
+    """全局影像串流端點 - 優先顯示樹莓派實際影像"""
+    import httpx
     
     async def generate_frames():
-        try:
-            frame_count = 0
-            start_time = time.time()
-            
-            while True:
-                try:
-                    # 生成測試影像
-                    img = np.zeros((480, 640, 3), dtype=np.uint8)
-                    
-                    # 添加背景
-                    cv2.rectangle(img, (0, 0), (640, 80), (50, 50, 50), -1)
-                    
-                    cv2.putText(img, "Fall Detection System", (50, 50), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                    
-                    cv2.putText(img, f"Raspberry Pi: 100.66.243.67", (50, 120), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
-                    
-                    cv2.putText(img, f"Frame: {frame_count}", (50, 160), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    
-                    cv2.putText(img, f"Uptime: {int(time.time() - start_time)}s", (50, 200), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                    
-                    # 跌倒狀態顯示
-                    fall_status = current_fall_status.get('fall', False)
-                    status_text = 'FALL DETECTED' if fall_status else 'NORMAL'
-                    status_color = (0, 0, 255) if fall_status else (0, 255, 0)
-                    
-                    cv2.putText(img, f"Status: {status_text}", (50, 240), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
-                    
-                    if fall_status:
-                        # 跌倒警告效果
-                        cv2.rectangle(img, (30, 260), (610, 300), (0, 0, 255), 3)
-                        cv2.putText(img, "EMERGENCY ALERT!", (50, 285), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                    
-                    # 時間戳記
-                    cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (50, 320), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-                    
-                    # 將影像編碼為 JPEG
-                    ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                    if not ret:
-                        continue
-                        
+        # 首先嘗試連接樹莓派的實際串流
+        stream_urls = [
+            'http://100.66.243.67/stream.mjpg',           # 原始串流
+            'http://100.66.243.67/stream_processed.mjpg', # 處理後串流
+        ]
+        
+        # 嘗試連接樹莓派串流
+        for url in stream_urls:
+            try:
+                logger.info(f"全局端點嘗試連接樹莓派: {url}")
+                
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(10.0, connect=5.0),
+                    follow_redirects=True
+                ) as client:
+                    async with client.stream(
+                        'GET', 
+                        url,
+                        headers={
+                            'User-Agent': 'Fall-Detection-Global/1.0',
+                            'Accept': 'multipart/x-mixed-replace,image/jpeg,image/*'
+                        }
+                    ) as response:
+                        if response.status_code == 200:
+                            logger.info(f"全局端點成功連接樹莓派: {url}")
+                            
+                            # 直接轉發樹莓派的串流
+                            async for chunk in response.aiter_bytes(8192):
+                                if chunk:
+                                    yield chunk
+                            return  # 如果串流結束，退出函數
+                        else:
+                            logger.warning(f"樹莓派串流回應錯誤 {url}: {response.status_code}")
+                            
+            except Exception as e:
+                logger.error(f"無法連接樹莓派串流 {url}: {e}")
+                continue
+        
+        # 如果無法連接樹莓派，生成備用影像
+        logger.warning("全局端點無法連接樹莓派，顯示備用影像")
+        
+        # 生成備用影像的邏輯（與原來的測試影像類似）
+        frame_count = 0
+        start_time = time.time()
+        
+        while True:
+            try:
+                img = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.rectangle(img, (0, 0), (640, 80), (50, 50, 50), -1)
+                cv2.putText(img, "Raspberry Pi Disconnected", (50, 50), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                cv2.putText(img, f"Target: 100.66.243.67", (50, 120), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
+                cv2.putText(img, f"Frame: {frame_count}", (50, 160), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (50, 320), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                
+                ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ret:
                     frame = buffer.tobytes()
-                    
-                    # 返回 multipart 格式的影像串流
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-                    
-                    frame_count += 1
-                    await asyncio.sleep(0.033)  # 約 30 FPS
-                    
-                except Exception as e:
-                    logger.error(f"影像生成錯誤: {e}")
-                    await asyncio.sleep(1)
-                    
-        except Exception as e:
-            logger.error(f"影像串流錯誤: {e}")
+                
+                frame_count += 1
+                await asyncio.sleep(0.033)
+                
+            except Exception as e:
+                logger.error(f"備用影像生成錯誤: {e}")
+                await asyncio.sleep(1)
     
     return StreamingResponse(
         generate_frames(),
