@@ -848,3 +848,276 @@ async def get_fall_detection_status():
             "fall": False,
             "confidence": 0.0
         }
+
+@router.get("/gpu_acceleration_guide")
+async def gpu_acceleration_guide():
+    """GPU 加速設定指南"""
+    import subprocess
+    import os
+    
+    # 檢查當前系統狀態
+    current_status = {
+        "gpu_available": False,
+        "nvidia_driver": False,
+        "cuda_available": False,
+        "tensorflow_gpu": False,
+        "current_renderer": "CPU (llvmpipe)"
+    }
+    
+    # 檢查 GPU 硬體
+    try:
+        result = subprocess.run(['lspci'], capture_output=True, text=True, timeout=10)
+        gpu_info = []
+        for line in result.stdout.split('\n'):
+            if 'VGA' in line or 'NVIDIA' in line or 'Display' in line:
+                gpu_info.append(line.strip())
+        current_status["detected_hardware"] = gpu_info
+    except:
+        current_status["detected_hardware"] = ["無法檢測硬體"]
+    
+    # 檢查 NVIDIA 驅動
+    try:
+        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True, timeout=5)
+        current_status["nvidia_driver"] = result.returncode == 0
+        if result.returncode == 0:
+            current_status["nvidia_info"] = result.stdout.split('\n')[0:3]
+    except:
+        current_status["nvidia_driver"] = False
+    
+    # 檢查 CUDA
+    try:
+        result = subprocess.run(['nvcc', '--version'], capture_output=True, text=True, timeout=5)
+        current_status["cuda_available"] = result.returncode == 0
+        if result.returncode == 0:
+            current_status["cuda_version"] = result.stdout.strip()
+    except:
+        current_status["cuda_available"] = False
+    
+    # 檢查 TensorFlow GPU
+    try:
+        import tensorflow as tf
+        gpus = tf.config.list_physical_devices('GPU')
+        current_status["tensorflow_gpu"] = len(gpus) > 0
+        current_status["tensorflow_version"] = tf.__version__
+        current_status["available_gpus"] = [gpu.name for gpu in gpus]
+    except:
+        current_status["tensorflow_gpu"] = False
+    
+    return {
+        "current_status": current_status,
+        "setup_steps": {
+            "step_1": {
+                "title": "🔍 檢查 GPU 硬體",
+                "description": "確認系統有 NVIDIA GPU",
+                "commands": [
+                    "lspci | grep -i nvidia",
+                    "lspci | grep -i vga"
+                ],
+                "expected": "應該看到 NVIDIA 顯示卡資訊"
+            },
+            "step_2": {
+                "title": "🚀 安裝 NVIDIA 驅動",
+                "description": "安裝適當的 NVIDIA 驅動程式",
+                "commands": [
+                    "sudo apt update",
+                    "sudo apt install nvidia-driver-470",  # 或更新版本
+                    "sudo reboot"
+                ],
+                "expected": "重開機後 nvidia-smi 指令可正常執行"
+            },
+            "step_3": {
+                "title": "⚡ 安裝 CUDA Toolkit",
+                "description": "安裝 CUDA 開發工具包",
+                "commands": [
+                    "sudo apt install nvidia-cuda-toolkit",
+                    "export PATH=/usr/local/cuda/bin:$PATH",
+                    "export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
+                ],
+                "expected": "nvcc --version 指令可正常執行"
+            },
+            "step_4": {
+                "title": "🤖 安裝 TensorFlow GPU",
+                "description": "安裝支援 GPU 的 TensorFlow",
+                "commands": [
+                    "pip uninstall tensorflow",
+                    "pip install tensorflow[and-cuda]",
+                    # 或者
+                    "pip install tensorflow-gpu==2.12.0"
+                ],
+                "expected": "TensorFlow 可以檢測到 GPU"
+            },
+            "step_5": {
+                "title": "✅ 驗證 GPU 設定",
+                "description": "確認所有組件正常運作",
+                "commands": [
+                    "nvidia-smi",
+                    "python -c \"import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))\"",
+                    "python -c \"import tensorflow as tf; print(tf.test.is_gpu_available())\""
+                ],
+                "expected": "應該看到 GPU 資訊和 True"
+            }
+        },
+        "quick_setup_script": {
+            "description": "一鍵安裝腳本 (需要 sudo 權限)",
+            "script": """#!/bin/bash
+echo "🚀 開始安裝 GPU 加速環境..."
+
+# 更新系統
+sudo apt update
+
+# 安裝 NVIDIA 驅動
+echo "📥 安裝 NVIDIA 驅動..."
+sudo apt install -y nvidia-driver-470
+
+# 安裝 CUDA
+echo "⚡ 安裝 CUDA..."
+sudo apt install -y nvidia-cuda-toolkit
+
+# 設定環境變數
+echo "🔧 設定環境變數..."
+echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+
+# 安裝 TensorFlow GPU
+echo "🤖 安裝 TensorFlow GPU..."
+pip uninstall -y tensorflow
+pip install tensorflow[and-cuda]
+
+echo "✅ 安裝完成！請重新啟動系統以生效。"
+echo "重啟後執行：nvidia-smi 來確認驅動安裝成功"
+""",
+            "save_as": "install_gpu_acceleration.sh",
+            "usage": "chmod +x install_gpu_acceleration.sh && ./install_gpu_acceleration.sh"
+        },
+        "troubleshooting": {
+            "common_issues": [
+                {
+                    "problem": "nvidia-smi 指令找不到",
+                    "solution": "驅動未正確安裝，重新安裝 nvidia-driver"
+                },
+                {
+                    "problem": "TensorFlow 找不到 GPU",
+                    "solution": "檢查 CUDA 版本相容性，重新安裝正確版本的 TensorFlow"
+                },
+                {
+                    "problem": "CUDA out of memory",
+                    "solution": "減少批次大小或使用 tf.config.experimental.set_memory_growth"
+                }
+            ]
+        }
+    }
+
+@router.get("/enable_gpu_acceleration")
+async def enable_gpu_acceleration():
+    """嘗試啟用 GPU 加速"""
+    try:
+        import tensorflow as tf
+        
+        # 檢查 GPU 可用性
+        gpus = tf.config.list_physical_devices('GPU')
+        
+        if not gpus:
+            return {
+                "success": False,
+                "message": "沒有檢測到 GPU 設備",
+                "recommendation": "請先安裝 NVIDIA 驅動和 CUDA"
+            }
+        
+        # 設定 GPU 記憶體增長
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        
+        # 測試 GPU 運算
+        with tf.device('/GPU:0'):
+            test_tensor = tf.constant([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+            result = tf.matmul(test_tensor, test_tensor, transpose_b=True)
+        
+        return {
+            "success": True,
+            "message": "GPU 加速已啟用",
+            "available_gpus": [gpu.name for gpu in gpus],
+            "test_result": "GPU 運算測試成功",
+            "next_steps": [
+                "重新啟動跌倒偵測服務以使用 GPU",
+                "監控 GPU 使用率：nvidia-smi"
+            ]
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "GPU 啟用失敗",
+            "troubleshooting": [
+                "檢查 NVIDIA 驅動是否正確安裝",
+                "確認 CUDA 和 TensorFlow 版本相容性",
+                "重新安裝 tensorflow-gpu"
+            ]
+        }
+
+@router.get("/benchmark_performance")
+async def benchmark_performance():
+    """效能基準測試 - CPU vs GPU"""
+    import time
+    import numpy as np
+    
+    try:
+        import tensorflow as tf
+        
+        results = {
+            "timestamp": int(time.time()),
+            "tests": []
+        }
+        
+        # CPU 測試
+        with tf.device('/CPU:0'):
+            start_time = time.time()
+            # 模擬影像處理運算
+            data = tf.random.normal([100, 224, 224, 3])  # 100張 224x224 彩色影像
+            conv = tf.keras.layers.Conv2D(32, 3, activation='relu')
+            result_cpu = conv(data)
+            cpu_time = time.time() - start_time
+            
+        results["tests"].append({
+            "device": "CPU",
+            "time_seconds": cpu_time,
+            "data_shape": [100, 224, 224, 3],
+            "operation": "Conv2D processing"
+        })
+        
+        # GPU 測試 (如果可用)
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            with tf.device('/GPU:0'):
+                start_time = time.time()
+                data_gpu = tf.random.normal([100, 224, 224, 3])
+                conv_gpu = tf.keras.layers.Conv2D(32, 3, activation='relu')
+                result_gpu = conv_gpu(data_gpu)
+                gpu_time = time.time() - start_time
+                
+            results["tests"].append({
+                "device": "GPU",
+                "time_seconds": gpu_time,
+                "data_shape": [100, 224, 224, 3],
+                "operation": "Conv2D processing"
+            })
+            
+            # 計算加速比
+            if gpu_time > 0:
+                speedup = cpu_time / gpu_time
+                results["performance_summary"] = {
+                    "cpu_time": f"{cpu_time:.3f}s",
+                    "gpu_time": f"{gpu_time:.3f}s",
+                    "speedup": f"{speedup:.2f}x",
+                    "recommendation": "使用 GPU" if speedup > 1.2 else "CPU 已足夠"
+                }
+        else:
+            results["gpu_status"] = "GPU 不可用"
+            
+        return results
+        
+    except Exception as e:
+        return {
+            "error": str(e),
+            "message": "效能測試失敗"
+        }
