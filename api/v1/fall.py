@@ -694,3 +694,120 @@ async def test_raspberry_pi():
             "error": str(e),
             "accessible": False
         }
+
+@router.get("/system_info")
+async def get_system_info():
+    """獲取系統資源和 GPU 使用資訊"""
+    import psutil
+    import subprocess
+    import os
+    
+    try:
+        system_info = {
+            "timestamp": int(time.time()),
+            "cpu": {
+                "count": psutil.cpu_count(),
+                "usage": psutil.cpu_percent(interval=1),
+                "load_avg": os.getloadavg() if hasattr(os, 'getloadavg') else None
+            },
+            "memory": {
+                "total": psutil.virtual_memory().total // (1024**3),  # GB
+                "available": psutil.virtual_memory().available // (1024**3),  # GB
+                "usage_percent": psutil.virtual_memory().percent
+            },
+            "gpu": {
+                "detected": False,
+                "nvidia_available": False,
+                "tensorflow_gpu": False,
+                "details": []
+            }
+        }
+        
+        # 檢查 NVIDIA GPU
+        try:
+            result = subprocess.run(['nvidia-smi', '--query-gpu=name,memory.total,memory.used,utilization.gpu', '--format=csv,noheader,nounits'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                system_info["gpu"]["nvidia_available"] = True
+                system_info["gpu"]["detected"] = True
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        parts = line.split(', ')
+                        if len(parts) >= 4:
+                            system_info["gpu"]["details"].append({
+                                "name": parts[0],
+                                "memory_total": f"{parts[1]} MB",
+                                "memory_used": f"{parts[2]} MB", 
+                                "utilization": f"{parts[3]}%"
+                            })
+        except Exception as e:
+            system_info["gpu"]["nvidia_error"] = str(e)
+        
+        # 檢查 TensorFlow GPU 支援
+        try:
+            import tensorflow as tf
+            system_info["tensorflow_version"] = tf.__version__
+            gpus = tf.config.list_physical_devices('GPU')
+            system_info["gpu"]["tensorflow_gpu"] = len(gpus) > 0
+            system_info["gpu"]["tensorflow_gpus"] = [gpu.name for gpu in gpus]
+        except Exception as e:
+            system_info["tensorflow_error"] = str(e)
+        
+        # 檢查 OpenGL 渲染器
+        try:
+            result = subprocess.run(['glxinfo', '-B'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if 'OpenGL renderer string' in line:
+                        system_info["opengl_renderer"] = line.split(':', 1)[1].strip()
+                    elif 'OpenGL version string' in line:
+                        system_info["opengl_version"] = line.split(':', 1)[1].strip()
+        except Exception as e:
+            system_info["opengl_error"] = str(e)
+        
+        return system_info
+        
+    except Exception as e:
+        logger.error(f"獲取系統資訊錯誤: {e}")
+        return {
+            "error": str(e),
+            "timestamp": int(time.time())
+        }
+
+@router.get("/fall_detection_status")
+async def get_fall_detection_status():
+    """獲取跌倒偵測系統狀態"""
+    try:
+        from app.services.fall_detection_service import current_fall_status
+        
+        # 獲取跌倒偵測服務的詳細資訊
+        status_info = current_fall_status.copy()
+        status_info.update({
+            "timestamp": int(time.time()),
+            "service_info": {
+                "model_loaded": True,  # 根據實際狀況調整
+                "camera_connected": False,  # 根據實際狀況調整
+                "processing_fps": 0,  # 根據實際狀況調整
+                "gpu_acceleration": False  # 根據實際狀況調整
+            }
+        })
+        
+        # 嘗試獲取模組的詳細資訊
+        try:
+            # 這裡可能需要根據你的 fall_detection_service 實際結構調整
+            import sys
+            fall_modules = [name for name in sys.modules.keys() if 'fall' in name.lower()]
+            status_info["loaded_modules"] = fall_modules
+        except Exception as e:
+            status_info["modules_error"] = str(e)
+        
+        return status_info
+        
+    except Exception as e:
+        logger.error(f"獲取跌倒偵測狀態錯誤: {e}")
+        return {
+            "error": str(e),
+            "timestamp": int(time.time()),
+            "fall": False,
+            "confidence": 0.0
+        }
