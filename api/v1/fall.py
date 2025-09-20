@@ -432,51 +432,68 @@ async def video_proxy():
         retry_count = 0
         max_retries = 3
         
-        while retry_count < max_retries:
-            try:
-                logger.info(f"嘗試連接樹莓派攝影機串流 (第 {retry_count + 1} 次) - IP: 100.66.243.67")
-                
-                async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(30.0, connect=10.0),
-                    follow_redirects=True
-                ) as client:
-                    async with client.stream(
-                        'GET', 
-                        'http://100.66.243.67/api/v1/fall/video_feed',  # 確保使用正確的樹莓派 IP 和完整路徑
-                        headers={
-                            'User-Agent': 'Fall-Detection-Proxy/1.0',
-                            'Accept': 'multipart/x-mixed-replace,image/*'
-                        }
-                    ) as response:
-                        if response.status_code == 200:
-                            logger.info("成功連接到樹莓派攝影機串流")
-                            async for chunk in response.aiter_bytes(8192):
-                                if chunk:
-                                    yield chunk
-                        else:
-                            logger.error(f"樹莓派攝影機回應錯誤: {response.status_code}")
-                            raise httpx.RequestError(f"HTTP {response.status_code}")
-                            
-            except Exception as e:
-                logger.error(f"攝影機連線錯誤 (嘗試 {retry_count + 1}/{max_retries}): {e}")
-                retry_count += 1
-                
-                if retry_count < max_retries:
-                    await asyncio.sleep(retry_count * 2)
-                else:
-                    break
+        # 嘗試多個可能的串流端點
+        stream_urls = [
+            'http://100.66.243.67/stream.mjpg',
+            'http://100.66.243.67/api/v1/fall/video_feed',
+            'http://100.66.243.67/api/fall/video_feed',
+            'http://100.66.243.67/video_feed',
+            'http://100.66.243.67/mjpg_stream',
+        ]
         
-        # 生成錯誤影像
+        for url in stream_urls:
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    logger.info(f"嘗試連接樹莓派攝影機串流 (第 {retry_count + 1} 次) - URL: {url}")
+                    
+                    async with httpx.AsyncClient(
+                        timeout=httpx.Timeout(30.0, connect=10.0),
+                        follow_redirects=True
+                    ) as client:
+                        async with client.stream(
+                            'GET', 
+                            url,
+                            headers={
+                                'User-Agent': 'Fall-Detection-Proxy/1.0',
+                                'Accept': 'multipart/x-mixed-replace,image/jpeg,image/*'
+                            }
+                        ) as response:
+                            if response.status_code == 200:
+                                logger.info(f"成功連接到樹莓派攝影機串流: {url}")
+                                async for chunk in response.aiter_bytes(8192):
+                                    if chunk:
+                                        yield chunk
+                                return  # 成功連接，結束函數
+                            else:
+                                logger.warning(f"樹莓派攝影機回應錯誤 {url}: {response.status_code}")
+                                raise httpx.RequestError(f"HTTP {response.status_code}")
+                                
+                except Exception as e:
+                    logger.error(f"攝影機連線錯誤 {url} (嘗試 {retry_count + 1}/{max_retries}): {e}")
+                    retry_count += 1
+                    
+                    if retry_count < max_retries:
+                        await asyncio.sleep(retry_count * 2)
+                    else:
+                        break
+        
+        # 所有 URL 都失敗，生成錯誤影像
+        logger.error("所有樹莓派串流 URL 都連線失敗")
         while True:
             try:
                 img = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(img, "Camera Connection Failed", (80, 180), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                cv2.putText(img, f"Target: 100.66.243.67", (80, 220), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(img, "Please check Raspberry Pi", (80, 260), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-                cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (80, 300), 
+                cv2.putText(img, "Camera Connection Failed", (80, 160), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                cv2.putText(img, f"Target: 100.66.243.67", (80, 200), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                cv2.putText(img, "Tried multiple endpoints:", (80, 240), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+                cv2.putText(img, "- /stream.mjpg", (80, 270), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+                cv2.putText(img, "- /api/v1/fall/video_feed", (80, 300), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+                cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (80, 340), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 
                 ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -513,21 +530,27 @@ async def test_raspberry_pi():
         async with httpx.AsyncClient(timeout=10.0) as client:
             # 測試多個可能的端點
             test_urls = [
+                'http://100.66.243.67/stream.mjpg',
                 'http://100.66.243.67/health',
                 'http://100.66.243.67/api/v1/fall/health',
                 'http://100.66.243.67/api/fall/health',
+                'http://100.66.243.67/video_feed',
+                'http://100.66.243.67/mjpg_stream',
                 'http://100.66.243.67/',
             ]
             
             results = []
             for url in test_urls:
                 try:
-                    response = await client.get(url)
+                    response = await client.get(url, timeout=5.0)
+                    content_type = response.headers.get('content-type', '')
                     results.append({
                         "url": url,
                         "status": response.status_code,
                         "accessible": True,
-                        "response_size": len(response.content)
+                        "content_type": content_type,
+                        "response_size": len(response.content),
+                        "is_stream": 'multipart' in content_type.lower() or 'mjpeg' in content_type.lower()
                     })
                 except Exception as e:
                     results.append({
@@ -540,7 +563,8 @@ async def test_raspberry_pi():
             return {
                 "raspberry_pi_ip": "100.66.243.67",
                 "test_time": int(time.time()),
-                "test_results": results
+                "test_results": results,
+                "recommended_stream_url": "http://100.66.243.67/stream.mjpg"
             }
             
     except Exception as e:
