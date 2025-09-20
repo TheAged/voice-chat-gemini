@@ -242,9 +242,9 @@ async def api_video_proxy():
                 cv2.putText(img, "Tried endpoints:", (80, 240), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
                 cv2.putText(img, "- /stream.mjpg", (80, 270), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+                cv2.putText(img, "- /video_feed", (80, 300), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-        proxy_stream(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache", 
