@@ -182,12 +182,11 @@ async def api_video_proxy():
     import httpx
     
     async def proxy_stream():
-        # 嘗試多個可能的串流端點，優先嘗試 stream.mjpg
+        # 根據樹莓派實際端點更新 URL
         stream_urls = [
-            'http://100.66.243.67/stream.mjpg',
+            'http://100.66.243.67/stream.mjpg',           # 原始串流
+            'http://100.66.243.67/stream_processed.mjpg', # 處理後串流
             'http://100.66.243.67/video_feed',
-            'http://100.66.243.67/api/v1/fall/video_feed',
-            'http://100.66.243.67/api/fall/video_feed',
             'http://100.66.243.67/mjpg_stream',
         ]
         
@@ -235,15 +234,16 @@ async def api_video_proxy():
         while True:
             try:
                 img = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(img, "Camera Connection Failed", (80, 160), 
+                cv2.putText(img, "Camera Connection Failed", (80, 140), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                cv2.putText(img, f"Target: 100.66.243.67", (80, 200), 
+                cv2.putText(img, f"Target: 100.66.243.67", (80, 180), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                cv2.putText(img, "Tried endpoints:", (80, 240), 
+                cv2.putText(img, "Tried endpoints:", (80, 220), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-                cv2.putText(img, "- /stream.mjpg", (80, 270), 
+                cv2.putText(img, "- /stream.mjpg", (80, 250), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-                cv2.putText(img, "- /video_feed", (80, 300), 
+                cv2.putText(img, "- /stream_processed.mjpg", (80, 280), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5,
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
