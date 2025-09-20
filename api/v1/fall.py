@@ -101,31 +101,37 @@ async def get_api_fall_status():
     return current_fall_status
 
 @router.get("/history")
-async def get_fall_history(
-    limit: int = Query(30, description="限制返回的記錄數量"),
-    current_user: User = Depends(get_current_user)
-):
-    """獲取跌倒歷史記錄"""
-    # 這裡應該從資料庫或服務中獲取歷史記錄
-    # 暫時返回模擬資料
-    history_data = []
-    current_time = int(time.time())
-    
-    # 生成一些模擬的歷史資料
-    for i in range(min(limit, 10)):  # 最多返回10筆模擬資料
-        history_data.append({
-            "id": i + 1,
-            "fall_detected": i % 3 == 0,  # 每3筆有一筆跌倒記錄
-            "timestamp": current_time - (i * 3600),  # 每小時一筆記錄
-            "confidence": 0.85 if i % 3 == 0 else 0.12,
-            "location": "客廳" if i % 2 == 0 else "臥室"
-        })
-    
-    return {
-        "status": "success",
-        "data": history_data,
-        "total": len(history_data)
-    }
+async def get_fall_history(limit: int = Query(30, description="限制返回的記錄數量")):
+    """獲取跌倒歷史記錄 - 移除認證要求"""
+    try:
+        # 這裡應該從資料庫或服務中獲取歷史記錄
+        # 暫時返回模擬資料
+        history_data = []
+        current_time = int(time.time())
+        
+        # 生成一些模擬的歷史資料
+        for i in range(min(limit, 10)):  # 最多返回10筆模擬資料
+            history_data.append({
+                "id": i + 1,
+                "fall_detected": i % 3 == 0,  # 每3筆有一筆跌倒記錄
+                "timestamp": current_time - (i * 3600),  # 每小時一筆記錄
+                "confidence": 0.85 if i % 3 == 0 else 0.12,
+                "location": "客廳" if i % 2 == 0 else "臥室"
+            })
+        
+        return {
+            "status": "success",
+            "data": history_data,
+            "total": len(history_data)
+        }
+    except Exception as e:
+        logger.error(f"獲取歷史記錄錯誤: {e}")
+        return {
+            "status": "error",
+            "message": "無法獲取歷史記錄",
+            "data": [],
+            "total": 0
+        }
 
 @router.post("/update")
 async def update_fall(data: dict = Body(...), current_user: User = Depends(get_current_user)):
