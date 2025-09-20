@@ -403,9 +403,9 @@ async def simple_status():
     }
 
 # 添加 CORS 預檢請求處理
-@router.options("/{path:path}")
-async def options_handler(path: str):
-    """處理 CORS 預檢請求"""
+@router.options("/{full_path:path}")
+async def handle_options(full_path: str):
+    """處理所有路徑的 CORS 預檢請求"""
     from fastapi.responses import Response
     return Response(
         content="",
@@ -413,36 +413,49 @@ async def options_handler(path: str):
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With"
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, Accept",
+            "Access-Control-Max-Age": "86400"
         }
     )
-async def catch_all_fall_status(path: str):
-    """捕獲所有包含 fall_status 的請求"""
-    if "fall_status" in path or "status" in path:
-        return current_fall_status
-    else:
-        raise HTTPException(status_code=404, detail=f"路徑 {path} 不存在")
 
+# 添加一個通用的錯誤處理端點
+@router.get("/debug/{path:path}")
+async def debug_endpoint(path: str):
+    """調試端點 - 顯示請求的路徑資訊"""
+    return {
+        "requested_path": path,
+        "available_endpoints": [
+            "/fall_status",
+            "/status", 
+            "/video_feed",
+            "/video_proxy",
+            "/health",
+            "/test_raspberry_pi",
+            "/api/fall_status",
+            "/api/status"
+        ],
+        "timestamp": int(time.time())
+    }
+
+# 代理遠端影像串流以解決混合內容問題 - 移除認證要求
 @router.get("/video_proxy")
 async def video_proxy():
     """代理遠端影像串流以解決混合內容問題 - 移除認證要求"""
     import httpx
     
     async def proxy_stream():
-        retry_count = 0
-        max_retries = 3
-        
-        # 嘗試多個可能的串流端點
+        # 根據樹莓派實際的 API 端點結構更新 URL
         stream_urls = [
-            'http://100.66.243.67/stream.mjpg',
-            'http://100.66.243.67/api/v1/fall/video_feed',
-            'http://100.66.243.67/api/fall/video_feed',
+            'http://100.66.243.67/stream.mjpg',           # 原始串流
+            'http://100.66.243.67/stream_processed.mjpg', # 處理後串流  
             'http://100.66.243.67/video_feed',
             'http://100.66.243.67/mjpg_stream',
         ]
         
         for url in stream_urls:
             retry_count = 0
+            max_retries = 2
+            
             while retry_count < max_retries:
                 try:
                     logger.info(f"嘗試連接樹莓派攝影機串流 (第 {retry_count + 1} 次) - URL: {url}")
@@ -483,17 +496,17 @@ async def video_proxy():
         while True:
             try:
                 img = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(img, "Camera Connection Failed", (80, 160), 
+                cv2.putText(img, "Camera Connection Failed", (80, 140), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                cv2.putText(img, f"Target: 100.66.243.67", (80, 200), 
+                cv2.putText(img, f"Target: 100.66.243.67", (80, 180), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                cv2.putText(img, "Tried multiple endpoints:", (80, 240), 
+                cv2.putText(img, "Tried endpoints:", (80, 220), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-                cv2.putText(img, "- /stream.mjpg", (80, 270), 
+                cv2.putText(img, "- /stream.mjpg", (80, 250), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-                cv2.putText(img, "- /api/v1/fall/video_feed", (80, 300), 
+                cv2.putText(img, "- /stream_processed.mjpg", (80, 280), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-                cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (80, 340), 
+                cv2.putText(img, f"Time: {time.strftime('%H:%M:%S')}", (80, 320), 
                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 
                 ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -520,7 +533,6 @@ async def video_proxy():
         }
     )
 
-# 添加樹莓派連線測試端點
 @router.get("/test_raspberry_pi")
 async def test_raspberry_pi():
     """測試樹莓派連線狀態"""
@@ -528,15 +540,15 @@ async def test_raspberry_pi():
     
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # 測試多個可能的端點
+            # 根據樹莓派實際的 API 端點測試
             test_urls = [
-                'http://100.66.243.67/stream.mjpg',
-                'http://100.66.243.67/health',
-                'http://100.66.243.67/api/v1/fall/health',
-                'http://100.66.243.67/api/fall/health',
-                'http://100.66.243.67/video_feed',
-                'http://100.66.243.67/mjpg_stream',
-                'http://100.66.243.67/',
+                'http://100.66.243.67/stream.mjpg',           # 原始串流
+                'http://100.66.243.67/stream_processed.mjpg', # 處理後串流
+                'http://100.66.243.67/dashboard',             # 監控儀表板
+                'http://100.66.243.67/api/fall_status',       # 跌倒狀態
+                'http://100.66.243.67/events',                # 事件流
+                'http://100.66.243.67/api/health',            # 健康檢查
+                'http://100.66.243.67/',                      # 根路徑
             ]
             
             results = []
@@ -564,7 +576,10 @@ async def test_raspberry_pi():
                 "raspberry_pi_ip": "100.66.243.67",
                 "test_time": int(time.time()),
                 "test_results": results,
-                "recommended_stream_url": "http://100.66.243.67/stream.mjpg"
+                "recommended_stream_urls": [
+                    "http://100.66.243.67/stream.mjpg",
+                    "http://100.66.243.67/stream_processed.mjpg"
+                ]
             }
             
     except Exception as e:
