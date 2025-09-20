@@ -192,37 +192,81 @@ async def sse_events(request: Request, current_user: User = Depends(get_current_
 
 @router.get("/video_feed")
 async def video_feed():
-    """影像串流端點 - 移除認證要求"""
+    """影像串流端點 - 優先顯示樹莓派實際影像"""
+    import httpx
+    
     async def generate_frames():
+        # 首先嘗試連接樹莓派的實際串流
+        stream_urls = [
+            'http://100.66.243.67/stream.mjpg',           # 原始串流
+            'http://100.66.243.67/stream_processed.mjpg', # 處理後串流
+        ]
+        
+        # 嘗試連接樹莓派串流
+        for url in stream_urls:
+            try:
+                logger.info(f"嘗試連接樹莓派實際串流: {url}")
+                
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(10.0, connect=5.0),
+                    follow_redirects=True
+                ) as client:
+                    async with client.stream(
+                        'GET', 
+                        url,
+                        headers={
+                            'User-Agent': 'Fall-Detection-WebApp/1.0',
+                            'Accept': 'multipart/x-mixed-replace,image/jpeg,image/*'
+                        }
+                    ) as response:
+                        if response.status_code == 200:
+                            logger.info(f"成功連接樹莓派實際串流: {url}")
+                            
+                            # 直接轉發樹莓派的串流
+                            async for chunk in response.aiter_bytes(8192):
+                                if chunk:
+                                    yield chunk
+                            return  # 如果串流結束，退出函數
+                        else:
+                            logger.warning(f"樹莓派串流回應錯誤 {url}: {response.status_code}")
+                            
+            except Exception as e:
+                logger.error(f"無法連接樹莓派串流 {url}: {e}")
+                continue
+        
+        # 如果無法連接樹莓派，生成提示影像
+        logger.warning("無法連接樹莓派，顯示連線狀態影像")
+        
         try:
             frame_count = 0
             start_time = time.time()
             
             while True:
                 try:
-                    # 生成測試影像
+                    # 生成連線狀態影像
                     img = np.zeros((480, 640, 3), dtype=np.uint8)
                     
                     # 添加背景
                     cv2.rectangle(img, (0, 0), (640, 80), (50, 50, 50), -1)
                     
-                    cv2.putText(img, f"Fall Detection Camera", (50, 50), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                    cv2.putText(img, f"Connecting to Raspberry Pi...", (50, 50), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
                     
-                    cv2.putText(img, f"No Auth Required", (50, 120), 
+                    cv2.putText(img, f"Target: 100.66.243.67", (50, 120), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
                     
-                    cv2.putText(img, f"Frame: {frame_count}", (50, 160), 
+                    cv2.putText(img, f"Attempting: {frame_count % 2 and 'stream.mjpg' or 'stream_processed.mjpg'}", 
+                              (50, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    
+                    cv2.putText(img, f"Retry in: {5 - (frame_count % 5)}s", (50, 200), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    cv2.putText(img, f"Uptime: {int(time.time() - start_time)}s", (50, 200), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                     
                     # 跌倒狀態顯示
                     fall_status = current_fall_status.get('fall', False)
                     status_text = 'FALL DETECTED' if fall_status else 'NORMAL'
                     status_color = (0, 0, 255) if fall_status else (0, 255, 0)
                     
-                    cv2.putText(img, f"Status: {status_text}", (50, 240), 
+                    cv2.putText(img, f"Fall Status: {status_text}", (50, 240), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
                     
                     if fall_status:
@@ -234,6 +278,14 @@ async def video_feed():
                     # 時間戳記
                     cv2.putText(img, f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}", (50, 320), 
                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    
+                    # 每5秒重新嘗試連接
+                    if frame_count % 150 == 0 and frame_count > 0:  # 5秒 * 30fps = 150 frames
+                        logger.info("重新嘗試連接樹莓派...")
+                        # 遞歸調用自己來重新嘗試
+                        async for new_frame in generate_frames():
+                            yield new_frame
+                        return
                     
                     # 將影像編碼為 JPEG
                     ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 85])
