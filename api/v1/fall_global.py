@@ -278,3 +278,49 @@ async def api_video_proxy():
             **CORS_HEADERS
         }
     )
+
+# 添加歷史記錄端點
+@global_fall_router.get("/api/fall_history")
+async def api_fall_history(limit: int = Query(30, description="限制返回的記錄數量")):
+    """全局歷史記錄端點 - 無需認證"""
+    try:
+        history_data = []
+        current_time = int(time.time())
+        
+        # 生成模擬歷史資料
+        for i in range(min(limit, 15)):  # 返回更多資料
+            history_data.append({
+                "id": i + 1,
+                "fall_detected": i % 4 == 0,  # 每4筆有一筆跌倒記錄
+                "timestamp": current_time - (i * 1800),  # 每半小時一筆記錄
+                "confidence": 0.88 if i % 4 == 0 else 0.15,
+                "location": ["客廳", "臥室", "廚房", "浴室"][i % 4],
+                "source": "raspberry_pi"
+            })
+        
+        return JSONResponse(
+            content={
+                "status": "success",
+                "data": history_data,
+                "total": len(history_data),
+                "page": 1,
+                "limit": limit
+            },
+            headers=CORS_HEADERS
+        )
+    except Exception as e:
+        logger.error(f"全局歷史記錄錯誤: {e}")
+        return JSONResponse(
+            content={
+                "status": "error",
+                "message": "無法獲取歷史記錄",
+                "data": [],
+                "total": 0
+            },
+            headers=CORS_HEADERS
+        )
+
+@global_fall_router.get("/fall_history") 
+async def fall_history_alias(limit: int = Query(30, description="限制返回的記錄數量")):
+    """歷史記錄別名端點"""
+    return await api_fall_history(limit)
