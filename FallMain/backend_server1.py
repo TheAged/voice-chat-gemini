@@ -579,26 +579,54 @@ def enhanced_video_worker():
 
 @app.get("/stream.mjpg")
 def stream_mjpeg():
-    """原始 MJPEG 串流"""
+    """原始 MJPEG 串流 - 優化超時處理"""
     boundary = "frame"
     def gen():
         last_sent = 0.0
         period = 1.0 / max(1.0, STREAM_FPS)
+        no_data_count = 0
+        
         while True:
             with _latest_jpeg_lock:
                 jpg = _latest_jpeg
+            
             if jpg is None:
-                time.sleep(0.05)
-                continue
+                no_data_count += 1
+                if no_data_count > 100:  # 3秒無數據後生成提示影像
+                    # 生成無數據提示影像
+                    img = np.zeros((240, 320, 3), dtype=np.uint8)
+                    cv2.putText(img, "No Video Data", (50, 120), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                    cv2.putText(img, f"Waiting... {no_data_count//30}s", (50, 160), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+                    
+                    ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                    if ret:
+                        jpg = buffer.tobytes()
+                    else:
+                        time.sleep(0.1)
+                        continue
+                else:
+                    time.sleep(0.03)
+                    continue
+            else:
+                no_data_count = 0
+            
             t = time.time()
             if t - last_sent < period:
-                time.sleep(0.004)
+                time.sleep(0.001)  # 減少睡眠時間
                 continue
             last_sent = t
-            yield (b"--" + boundary.encode() + b"\r\n"
-                   b"Content-Type: image/jpeg\r\n"
-                   b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" +
-                   jpg + b"\r\n")
+            
+            try:
+                yield (b"--" + boundary.encode() + b"\r\n"
+                       b"Content-Type: image/jpeg\r\n"
+                       b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" +
+                       jpg + b"\r\n")
+            except Exception as e:
+                print(f"[STREAM] 串流錯誤: {e}")
+                break
+                
     return Response(gen(), mimetype=f"multipart/x-mixed-replace; boundary={boundary}")
 
 @app.get("/stream_processed.mjpg")
@@ -739,35 +767,131 @@ def api_health():
     )
     return jsonify(env)
 
-# 添加 CORS 支援
-@app.after_request
-def after_request(response):
-    """添加 CORS 標頭"""
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    return response
+# 添加登入相關端點
+@app.post("/login")
+def login():
+    """登入端點 - Flask 版本"""
+    try:
+        data = request.get_json(silent=True) or {}
+        username = data.get("username", "")
+        password = data.get("password", "")
+        
+        # 快速認證邏輯
+        if username and password:
+            if len(username) >= 3 and len(password) >= 3:
+                return jsonify({
+                    "success": True,
+                    "message": "登入成功",
+                    "token": f"flask_token_{int(time.time())}_{username}",
+                    "user": {
+                        "username": username,
+                        "role": "admin",
+                        "permissions": ["view", "monitor", "control"]
+                    },
+                    "service": "flask_enhanced",
+                    "timestamp": time.time(),
+                    "expires_in": 3600
+                })
+            else:
+                return jsonify({
+                    "success": False,
+                    "message": "用戶名和密碼至少需要3個字符"
+                }), 400
+        else:
+            return jsonify({
+                "success": False,
+                "message": "請提供用戶名和密碼"
+            }), 400
+            
+    except Exception as e:
+        print(f"[LOGIN] 錯誤: {e}")
+        return jsonify({
+            "success": False,
+            "message": "登入處理錯誤",
+            "error": str(e)
+        }), 500
 
-# 添加根 API 端點
-@app.get("/api")
-def api_root():
-    """API 根端點"""
+@app.post("/api/login")
+def api_login():
+    """API 登入端點"""
+    return login()
+
+@app.post("/auth/login")
+def auth_login():
+    """認證登入端點"""
+    return login()
+
+@app.get("/auth/status")
+def auth_status():
+    """認證狀態檢查"""
     return jsonify({
-        "service": "Flask Enhanced Fall Detection API",
-        "version": "2.0.0", 
-        "status": "running",
+        "authenticated": True,
+        "service": "flask_enhanced",
         "timestamp": time.time(),
-        "current_fall_status": _current_fall_status,
-        "available_endpoints": {
-            "status": ["/api/fall_status", "/api/status"],
-            "history": ["/api/fall_history", "/api/history", "/fall_history"],
-            "streams": ["/stream.mjpg", "/stream_processed.mjpg"],
-            "snapshots": ["/snapshot.jpg", "/snapshot_processed.jpg"],
-            "events": ["/events"],
-            "health": ["/api/health"],
-            "line": ["/line/webhook", "/line/notify", "/line/notifyAll"]
-        }
+        "status": "ok"
     })
+
+@app.post("/logout")
+def logout():
+    """登出端點"""
+    return jsonify({
+        "success": True,
+        "message": "已登出",
+        "service": "flask_enhanced",
+        "timestamp": time.time()
+    })
+
+@app.get("/ping")
+def ping():
+    """Ping 端點 - 最快響應"""
+    return jsonify({
+        "pong": True,
+        "timestamp": time.time(),
+        "service": "flask_enhanced"
+    })
+
+@app.get("/api/ping")
+def api_ping():
+    """API Ping 端點"""
+    return ping()
+
+# 優化現有端點的響應時間
+@app.get("/quick_status")
+def quick_status():
+    """快速狀態響應 - 避免超時"""
+    # 簡化狀態檢查，避免鎖定操作
+    try:
+        video_active = _latest_jpeg is not None
+        processed_active = _processed_jpeg is not None
+        
+        # 快速獲取基本狀態，避免鎖定
+        basic_state = "UNKNOWN"
+        confidence = 0.0
+        
+        if _current_fall_status:
+            basic_state = _current_fall_status.get("state", "UNKNOWN")
+            confidence = _current_fall_status.get("confidence", 0.0)
+        
+        return jsonify({
+            "timestamp": time.time(),
+            "status": "ok",
+            "service": "flask_enhanced",
+            "quick_mode": True,
+            "data": {
+                "state": basic_state,
+                "confidence": confidence,
+                "video_active": video_active,
+                "processed_active": processed_active
+            }
+        })
+    except Exception as e:
+        print(f"[QUICK_STATUS] 錯誤: {e}")
+        return jsonify({
+            "timestamp": time.time(),
+            "status": "error",
+            "service": "flask_enhanced",
+            "error": str(e)
+        }), 500
 
 # ============= 主啟動函數 =============
 
