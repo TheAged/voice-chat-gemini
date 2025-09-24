@@ -1,9 +1,12 @@
+from fastapi import Depends
 from fastapi import APIRouter, Form, Depends
 from app.services.emotion_service import record_emotion_service
 from app.emotion_module import get_chart_data as get_chart_data_func
 from app.services.auth_service import get_current_user, User
 
 router = APIRouter(tags=["emotions"])
+
+from app.services.auth_service import get_current_user, User
 
 @router.post("/") # 記錄情緒
 async def record_emotion(
