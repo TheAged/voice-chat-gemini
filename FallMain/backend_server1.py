@@ -15,7 +15,8 @@ import cv2
 from flask import Flask, Response, request, jsonify
 
 # 跌倒偵測模組
-from fall_detection_enhanced import FallDetector
+# from fall_detection_enhanced import FallDetector
+from fall_detection1 import FallStateMachine
 
 # ---- 伺服器/串流設定 ----
 HOST               = os.environ.get("HOST", "0.0.0.0")
@@ -233,13 +234,6 @@ def draw_detection_overlay(frame: np.ndarray, result: Dict[str, Any]) -> np.ndar
     timestamp = datetime.fromtimestamp(result.get('ts', time.time())).strftime('%H:%M:%S')
     cv2.putText(overlay_frame, timestamp, (w-150, 30), 
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    
-    # 距離地面高度指示
-    if state in ["FALLING", "GROUNDED"]:
-        height = result.get("ground_height", 0.0)
-        color = (255, 255, 0) if state == "FALLING" else (0, 255, 255)
-        cv2.putText(overlay_frame, f"Height: {height:.1f}m", 
-                   (20, h-40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     
     # 跌倒警告
     if state == "GROUNDED":
@@ -561,7 +555,7 @@ def enhanced_video_worker():
                 )
                 sse_broadcast(alert_env)
                 
-                # LINE 距離地面高度推播
+                # LINE 跌倒推播
                 d = alert_env["data"]
                 line_msg = (
                     f"⚠️ 跌倒警告\n"
@@ -579,54 +573,26 @@ def enhanced_video_worker():
 
 @app.get("/stream.mjpg")
 def stream_mjpeg():
-    """原始 MJPEG 串流 - 優化超時處理"""
+    """原始 MJPEG 串流"""
     boundary = "frame"
     def gen():
         last_sent = 0.0
         period = 1.0 / max(1.0, STREAM_FPS)
-        no_data_count = 0
-        
         while True:
             with _latest_jpeg_lock:
                 jpg = _latest_jpeg
-            
             if jpg is None:
-                no_data_count += 1
-                if no_data_count > 100:  # 3秒無數據後生成提示影像
-                    # 生成無數據提示影像
-                    img = np.zeros((240, 320, 3), dtype=np.uint8)
-                    cv2.putText(img, "No Video Data", (50, 120), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                    cv2.putText(img, f"Waiting... {no_data_count//30}s", (50, 160), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-                    
-                    ret, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 60])
-                    if ret:
-                        jpg = buffer.tobytes()
-                    else:
-                        time.sleep(0.1)
-                        continue
-                else:
-                    time.sleep(0.03)
-                    continue
-            else:
-                no_data_count = 0
-            
+                time.sleep(0.05)
+                continue
             t = time.time()
             if t - last_sent < period:
-                time.sleep(0.001)  # 減少睡眠時間
+                time.sleep(0.004)
                 continue
             last_sent = t
-            
-            try:
-                yield (b"--" + boundary.encode() + b"\r\n"
-                       b"Content-Type: image/jpeg\r\n"
-                       b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" +
-                       jpg + b"\r\n")
-            except Exception as e:
-                print(f"[STREAM] 串流錯誤: {e}")
-                break
-                
+            yield (b"--" + boundary.encode() + b"\r\n"
+                   b"Content-Type: image/jpeg\r\n"
+                   b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" +
+                   jpg + b"\r\n")
     return Response(gen(), mimetype=f"multipart/x-mixed-replace; boundary={boundary}")
 
 @app.get("/stream_processed.mjpg")
@@ -684,214 +650,446 @@ def api_fall_status():
         "timestamp": time.time()
     })
 
-# 添加缺失的歷史記錄端點
-@app.get("/api/fall_history")
-def api_fall_history():
-    """取得跌倒歷史記錄 - 修復前端 404 錯誤"""
-    try:
-        # 模擬歷史記錄數據
-        current_time = int(time.time())
-        limit = request.args.get('limit', 30, type=int)
-        
-        history_data = []
-        for i in range(min(limit, 15)):  # 最多返回15筆模擬資料
-            history_data.append({
-                "id": i + 1,
-                "fall_detected": i % 4 == 0,  # 每4筆有一筆跌倒記錄
-                "timestamp": current_time - (i * 1800),  # 每30分鐘一筆記錄
-                "confidence": 0.88 if i % 4 == 0 else 0.15,
-                "location": ["客廳", "臥室", "廚房", "浴室"][i % 4],
-                "source": "flask_enhanced_service",
-                "device_id": DEVICE_ID
-            })
-        
-        return jsonify({
-            "status": "success",
-            "data": history_data,
-            "total": len(history_data),
-            "page": 1,
-            "limit": limit,
-            "has_more": len(history_data) >= limit
-        })
-    except Exception as e:
-        print(f"[API] 歷史記錄錯誤: {e}")
-        return jsonify({
-            "status": "error",
-            "message": "無法獲取歷史記錄", 
-            "data": [],
-            "total": 0,
-            "error": str(e)
-        }), 500
+@app.get("/events")
+def events():
+    """SSE 事件流"""
+    def sse_stream():
+        yield "retry: 2000\n\n"
+        q = queue.Queue()
+        subscribers.add(q)
+        try:
+            while True:
+                env = q.get()
+                yield f"data: {json.dumps(env, ensure_ascii=False)}\n\n"
+        finally:
+            subscribers.discard(q)
+    return Response(sse_stream(), mimetype="text/event-stream")
 
-@app.get("/api/history")
-def api_history_alias():
-    """歷史記錄別名端點"""
-    return api_fall_history()
+@app.get("/api/last")
+def api_last():
+    """取得最新 STATUS"""
+    return (_last_status_envelope or make_envelope("SYSTEM","system",{"message":"no status yet"})), 200
 
-@app.get("/fall_history")
-def fall_history_alias():
-    """歷史記錄簡短別名端點"""
-    return api_fall_history()
-
-# 添加 API 狀態別名
-@app.get("/api/status")
-def api_status_alias():
-    """API 狀態別名端點"""
-    return api_fall_status()
-
-# 修復健康檢查端點，添加更多資訊
 @app.get("/api/health")
 def api_health():
-    """健康檢查 - 增強版"""
+    """健康檢查"""
     env = make_envelope(
         event="SYSTEM", source="system",
         data={
             "status": "ok",
-            "service": "flask_enhanced_backend",
-            "version": "2.0.0",
             "stt": bool(_stt),
             "sos_keywords": SOS_KEYWORDS,
             "stream_fps": STREAM_FPS,
             "detector_fps_est": DETECT_FPS_EST,
             "fall_hold_sec": FALL_HOLD_SEC,
             "video_connected": _latest_jpeg is not None,
-            "processed_available": _processed_jpeg is not None,
-            "mongodb_connected": _line_col is not None,
-            "line_users_count": len(_line_all_userids()),
-            "endpoints": [
-                "/stream.mjpg", "/stream_processed.mjpg",
-                "/api/fall_status", "/api/fall_history", "/api/health",
-                "/dashboard", "/events", "/snapshot.jpg"
-            ]
+            "processed_available": _processed_jpeg is not None
         }
     )
-    return jsonify(env)
+    return env, 200
 
-# 添加登入相關端點
-@app.post("/login")
-def login():
-    """登入端點 - Flask 版本"""
-    try:
-        data = request.get_json(silent=True) or {}
-        username = data.get("username", "")
-        password = data.get("password", "")
-        
-        # 快速認證邏輯
-        if username and password:
-            if len(username) >= 3 and len(password) >= 3:
-                return jsonify({
-                    "success": True,
-                    "message": "登入成功",
-                    "token": f"flask_token_{int(time.time())}_{username}",
-                    "user": {
-                        "username": username,
-                        "role": "admin",
-                        "permissions": ["view", "monitor", "control"]
-                    },
-                    "service": "flask_enhanced",
-                    "timestamp": time.time(),
-                    "expires_in": 3600
-                })
-            else:
-                return jsonify({
-                    "success": False,
-                    "message": "用戶名和密碼至少需要3個字符"
-                }), 400
-        else:
-            return jsonify({
-                "success": False,
-                "message": "請提供用戶名和密碼"
-            }), 400
-            
-    except Exception as e:
-        print(f"[LOGIN] 錯誤: {e}")
-        return jsonify({
-            "success": False,
-            "message": "登入處理錯誤",
-            "error": str(e)
-        }), 500
+@app.get("/view")
+def view_page():
+    """簡易檢視頁（原始串流）"""
+    html = """
+    <html><head><meta charset="utf-8"><title>Raw Stream</title>
+    <style>body{margin:0;background:#000;display:flex;justify-content:center;align-items:center;height:100vh}</style>
+    </head><body>
+      <img src="/stream.mjpg" style="max-width:100%;max-height:100%;"/>
+    </body></html>
+    """
+    return Response(html, mimetype="text/html")
 
-@app.post("/api/login")
-def api_login():
-    """API 登入端點"""
-    return login()
-
-@app.post("/auth/login")
-def auth_login():
-    """認證登入端點"""
-    return login()
-
-@app.get("/auth/status")
-def auth_status():
-    """認證狀態檢查"""
-    return jsonify({
-        "authenticated": True,
-        "service": "flask_enhanced",
-        "timestamp": time.time(),
-        "status": "ok"
-    })
-
-@app.post("/logout")
-def logout():
-    """登出端點"""
-    return jsonify({
-        "success": True,
-        "message": "已登出",
-        "service": "flask_enhanced",
-        "timestamp": time.time()
-    })
-
-@app.get("/ping")
-def ping():
-    """Ping 端點 - 最快響應"""
-    return jsonify({
-        "pong": True,
-        "timestamp": time.time(),
-        "service": "flask_enhanced"
-    })
-
-@app.get("/api/ping")
-def api_ping():
-    """API Ping 端點"""
-    return ping()
-
-# 優化現有端點的響應時間
-@app.get("/quick_status")
-def quick_status():
-    """快速狀態響應 - 避免超時"""
-    # 簡化狀態檢查，避免鎖定操作
-    try:
-        video_active = _latest_jpeg is not None
-        processed_active = _processed_jpeg is not None
-        
-        # 快速獲取基本狀態，避免鎖定
-        basic_state = "UNKNOWN"
-        confidence = 0.0
-        
-        if _current_fall_status:
-            basic_state = _current_fall_status.get("state", "UNKNOWN")
-            confidence = _current_fall_status.get("confidence", 0.0)
-        
-        return jsonify({
-            "timestamp": time.time(),
-            "status": "ok",
-            "service": "flask_enhanced",
-            "quick_mode": True,
-            "data": {
-                "state": basic_state,
-                "confidence": confidence,
-                "video_active": video_active,
-                "processed_active": processed_active
+@app.get("/dashboard")
+def dashboard():
+    """完整監控儀表板"""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>長者監護系統 - 監控儀表板</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { 
+                font-family: 'Microsoft JhengHei', Arial, sans-serif; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: #333;
             }
-        })
-    except Exception as e:
-        print(f"[QUICK_STATUS] 錯誤: {e}")
-        return jsonify({
-            "timestamp": time.time(),
-            "status": "error",
-            "service": "flask_enhanced",
-            "error": str(e)
-        }), 500
+            .container { 
+                max-width: 1400px; 
+                margin: 0 auto; 
+                padding: 20px;
+            }
+            .header { 
+                text-align: center; 
+                margin-bottom: 30px; 
+                color: white;
+            }
+            .header h1 { 
+                font-size: 2.5em; 
+                margin-bottom: 10px; 
+                text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            }
+            .status-bar {
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 20px;
+                gap: 15px;
+            }
+            .status-card {
+                flex: 1;
+                background: white;
+                border-radius: 10px;
+                padding: 15px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                text-align: center;
+            }
+            .status-value {
+                font-size: 1.8em;
+                font-weight: bold;
+                margin-bottom: 5px;
+            }
+            .status-label {
+                color: #666;
+                font-size: 0.9em;
+            }
+            .streams { 
+                display: grid; 
+                grid-template-columns: 1fr 1fr; 
+                gap: 20px; 
+                margin-bottom: 30px; 
+            }
+            .stream-box { 
+                background: white; 
+                border-radius: 15px; 
+                padding: 20px; 
+                box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+                transition: transform 0.3s ease;
+            }
+            .stream-box:hover {
+                transform: translateY(-5px);
+            }
+            .stream-title { 
+                font-size: 1.3em; 
+                font-weight: bold; 
+                margin-bottom: 15px;
+                color: #444;
+                border-bottom: 2px solid #eee;
+                padding-bottom: 10px;
+            }
+            .stream-video { 
+                width: 100%; 
+                height: 350px; 
+                object-fit: contain; 
+                border: 2px solid #ddd; 
+                border-radius: 8px;
+                background: #f8f9fa;
+            }
+            .control-panel {
+                display: grid;
+                grid-template-columns: 2fr 1fr;
+                gap: 20px;
+            }
+            .status-panel { 
+                background: white; 
+                border-radius: 15px; 
+                padding: 25px; 
+                box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            }
+            .status-panel h3 {
+                color: #444;
+                margin-bottom: 20px;
+                font-size: 1.4em;
+                border-bottom: 2px solid #eee;
+                padding-bottom: 10px;
+            }
+            .status-item { 
+                display: flex; 
+                justify-content: space-between; 
+                margin-bottom: 15px; 
+                padding: 12px; 
+                border-radius: 8px;
+                font-weight: 500;
+            }
+            .status-stable { background: #d4edda; color: #155724; border-left: 4px solid #28a745; }
+            .status-falling { background: #fff3cd; color: #856404; border-left: 4px solid #ffc107; }
+            .status-grounded { background: #f8d7da; color: #721c24; border-left: 4px solid #dc3545; }
+            .alert-log { 
+                background: white;
+                border-radius: 15px;
+                padding: 20px;
+                box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            }
+            .alert-log h3 {
+                color: #444;
+                margin-bottom: 15px;
+                font-size: 1.2em;
+                border-bottom: 2px solid #eee;
+                padding-bottom: 10px;
+            }
+            .log-content { 
+                max-height: 300px; 
+                overflow-y: auto; 
+                font-family: 'Consolas', 'Monaco', monospace; 
+                font-size: 13px;
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 8px;
+                border: 1px solid #e9ecef;
+            }
+            .connection-status {
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 10px 15px;
+                border-radius: 25px;
+                color: white;
+                font-weight: bold;
+                z-index: 1000;
+            }
+            .connected { background: #28a745; }
+            .disconnected { background: #dc3545; }
+            .loading { background: #ffc107; color: #333; }
+            @media (max-width: 768px) {
+                .streams { grid-template-columns: 1fr; }
+                .control-panel { grid-template-columns: 1fr; }
+                .status-bar { flex-direction: column; }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="connection-status loading" id="connectionStatus">連線中...</div>
+        
+        <div class="container">
+            <div class="header">
+                <h1> 長者監護系統</h1>
+                <p>即時影像串流與跌倒狀態監控</p>
+            </div>
+            
+            <div class="status-bar">
+                <div class="status-card">
+                    <div class="status-value" id="currentState">載入中...</div>
+                    <div class="status-label">當前狀態</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-value" id="currentPosture">-</div>
+                    <div class="status-label">姿勢</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-value" id="groundTime">-</div>
+                    <div class="status-label">倒地時間</div>
+                </div>
+                <div class="status-card">
+                    <div class="status-value" id="confidence">-</div>
+                    <div class="status-label">置信度</div>
+                </div>
+            </div>
+            
+            <div class="streams">
+                <div class="stream-box">
+                    <div class="stream-title"> 原始影像串流</div>
+                    <img src="/stream.mjpg" class="stream-video" alt="Raw Stream" 
+                         onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjhmOWZhIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxOCIgZmlsbD0iIzY2NiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuaXoOW9semAo+OAgg=='; this.onerror=null;">
+                </div>
+                <div class="stream-box">
+                    <div class="stream-title"> 處理後影像串流 (含跌倒檢測)</div>
+                    <img src="/stream_processed.mjpg" class="stream-video" alt="Processed Stream"
+                         onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjhmOWZhIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxOCIgZmlsbD0iIzY2NiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuaXoOimleW+jOW9pemAo+OAgg=='; this.onerror=null;">
+                </div>
+            </div>
+            
+            <div class="control-panel">
+                <div class="status-panel">
+                    <h3> 詳細狀態資訊</h3>
+                    <div id="status-display">
+                        <div class="status-item status-stable">
+                            <span>當前狀態:</span>
+                            <span id="detail-state">載入中...</span>
+                        </div>
+                        <div class="status-item">
+                            <span>姿勢:</span>
+                            <span id="detail-posture">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span>倒地時間:</span>
+                            <span id="detail-ground-time">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span>置信度:</span>
+                            <span id="detail-confidence">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span>垂直速度:</span>
+                            <span id="detail-speed">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span>水平角度:</span>
+                            <span id="detail-horiz">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span>最後更新:</span>
+                            <span id="last-update">-</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="alert-log">
+                    <h3> 事件記錄</h3>
+                    <div class="log-content" id="alert-log">
+                        <strong>系統啟動中...</strong><br>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <script>
+            // 全域變數
+            let eventSource = null;
+            let connectionRetries = 0;
+            const maxRetries = 5;
+            
+            // 連線狀態管理
+            function updateConnectionStatus(status) {
+                const statusEl = document.getElementById('connectionStatus');
+                statusEl.className = 'connection-status ' + status;
+                statusEl.textContent = {
+                    'connected': ' 已連線',
+                    'disconnected': ' 連線中斷',
+                    'loading': ' 連線中...'
+                }[status] || '未知狀態';
+            }
+            
+            // 狀態更新函數
+            function updateStatus(data) {
+                // 簡化狀態顯示
+                document.getElementById('currentState').textContent = data.state || 'Unknown';
+                document.getElementById('currentPosture').textContent = data.posture || '-';
+                document.getElementById('groundTime').textContent = data.ground_time ? data.ground_time + 's' : '-';
+                document.getElementById('confidence').textContent = data.confidence ? data.confidence.toFixed(2) : '-';
+                
+                // 詳細狀態顯示
+                document.getElementById('detail-state').textContent = data.state || 'Unknown';
+                document.getElementById('detail-posture').textContent = data.posture || '-';
+                document.getElementById('detail-ground-time').textContent = data.ground_time ? data.ground_time + 's' : '-';
+                document.getElementById('detail-confidence').textContent = data.confidence ? data.confidence.toFixed(2) : '-';
+                document.getElementById('detail-speed').textContent = data.speed_y ? data.speed_y.toFixed(3) : '-';
+                document.getElementById('detail-horiz').textContent = data.horiz ? data.horiz.toFixed(1) + '°' : '-';
+                
+                // 更新時間
+                const updateTime = new Date().toLocaleTimeString();
+                document.getElementById('last-update').textContent = updateTime;
+                
+                // 更新狀態樣式
+                const statusItems = document.querySelectorAll('.status-item');
+                statusItems.forEach(item => {
+                    item.classList.remove('status-stable', 'status-falling', 'status-grounded');
+                    if (item.querySelector('#detail-state') || item.querySelector('#currentState')) {
+                        if (data.state === 'STABLE') item.classList.add('status-stable');
+                        else if (data.state === 'FALLING') item.classList.add('status-falling');
+                        else if (data.state === 'GROUNDED') item.classList.add('status-grounded');
+                    }
+                });
+            }
+            
+            // 事件記錄函數
+            function addAlert(event, data) {
+                const timestamp = new Date().toLocaleTimeString();
+                const alertLog = document.getElementById('alert-log');
+                
+                let message = '';
+                if (event === 'FALL_ALERT') {
+                    message = `[${timestamp}]  跌倒警報: ${data.type || 'unknown'} (置信度: ${data.confidence || 0})`;
+                } else if (event === 'SOS_DETECTED') {
+                    message = `[${timestamp}]  SOS求救: "${data.text || ''}" (關鍵詞: ${(data.keywords || []).join(', ')})`;
+                } else {
+                    message = `[${timestamp}] ${event}: ${JSON.stringify(data)}`;
+                }
+                
+                alertLog.innerHTML += message + '<br>';
+                alertLog.scrollTop = alertLog.scrollHeight;
+                
+                // 限制日誌長度
+                const lines = alertLog.innerHTML.split('<br>');
+                if (lines.length > 50) {
+                    alertLog.innerHTML = lines.slice(-50).join('<br>');
+                }
+            }
+            
+            // SSE 連線管理
+            function connectSSE() {
+                if (eventSource) {
+                    eventSource.close();
+                }
+                
+                updateConnectionStatus('loading');
+                eventSource = new EventSource('/events');
+                
+                eventSource.onopen = function() {
+                    updateConnectionStatus('connected');
+                    connectionRetries = 0;
+                    addAlert('系統', {message: '已連接到事件流'});
+                };
+                
+                eventSource.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.event === 'STATUS') {
+                            updateStatus(data.data);
+                        } else if (data.event === 'FALL_ALERT') {
+                            addAlert('跌倒警報', data.data);
+                        } else if (data.event === 'SOS_DETECTED') {
+                            addAlert('SOS求救', data.data);
+                        }
+                    } catch (e) {
+                        console.error('事件解析錯誤:', e);
+                    }
+                };
+                
+                eventSource.onerror = function() {
+                    updateConnectionStatus('disconnected');
+                    eventSource.close();
+                    
+                    if (connectionRetries < maxRetries) {
+                        connectionRetries++;
+                        setTimeout(connectSSE, 3000 * connectionRetries);
+                        addAlert('系統', {message: `連線中斷，${3 * connectionRetries}秒後重試...`});
+                    } else {
+                        addAlert('系統', {message: '連線失敗，請重新整理頁面'});
+                    }
+                };
+            }
+            
+            // 定期API查詢 (備用)
+            function pollStatus() {
+                fetch('/api/fall_status')
+                    .then(response => response.json())
+                    .then(result => {
+                        if (result.status === 'ok') {
+                            updateStatus(result.data);
+                        }
+                    })
+                    .catch(e => console.error('Status fetch error:', e));
+            }
+            
+            // 初始化
+            document.addEventListener('DOMContentLoaded', function() {
+                connectSSE();
+                setInterval(pollStatus, 10000); // 每10秒備用查詢
+                
+                // 添加頁面可見性變化處理
+                document.addEventListener('visibilitychange', function() {
+                    if (!document.hidden && (!eventSource || eventSource.readyState === EventSource.CLOSED)) {
+                        connectSSE();
+                    }
+                });
+            });
+        </script>
+    </body>
+    </html>
+    """
+    return Response(html, mimetype="text/html")
 
 # ============= 主啟動函數 =============
 
