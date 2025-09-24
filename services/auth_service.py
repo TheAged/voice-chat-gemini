@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 
-SECRET_KEY = "your_secret_key"  # 請改成安全的 key
-ALGORITHM = "HS256"
+SECRET_KEY = ""  # 請用自己的安全字串
+ALGORITHM = ""
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -30,7 +30,7 @@ async def register_user(name: str, phone: str, email: str, password: str):
 
 # 登入
 async def login_user(email: str, password: str):
-    user = await User.find_one({"email": email})  # 一定要 await
+    user = await User.find_one({"email": email})  # 用 email 查詢
     if not user or not bcrypt.verify(password, user.password_hash):
         return {"success": False, "msg": "帳號或密碼錯誤"}
     token = create_access_token({"sub": str(user.id)})
