@@ -1,3 +1,4 @@
+from fastapi import Depends
 from fastapi import APIRouter
 from pydantic import BaseModel
 from app.services.chat_service import chat_with_emotion
@@ -25,8 +26,10 @@ class ChatRequest(BaseModel):
     text: str
     audio_path: str = None
 
+from app.services.auth_service import get_current_user, User
+
 @router.post("/")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, current_user: User = Depends(get_current_user)):
     result = await chat_with_emotion(
         db=db,
         text=req.text,
@@ -41,5 +44,5 @@ async def chat(req: ChatRequest):
     return result
 
 @router.post("")
-async def chat_no_slash(req: ChatRequest):
-    return await chat(req)
+async def chat_no_slash(req: ChatRequest, current_user: User = Depends(get_current_user)):
+    return await chat(req, current_user)
