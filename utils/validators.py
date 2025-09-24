@@ -30,14 +30,41 @@ def clean_text_for_speech(text):
 def detect_user_intent(text):
     """使用 AI 智能判斷用戶意圖（簡化版，僅供 utils 示範）"""
     # 這裡僅示範，實際 AI 判斷請呼叫 LLM 服務
-    if "幾點" in text or "時間" in text:
+    
+    # 時間查詢和提醒查詢 - 優先檢查
+    time_keywords = ["幾點", "時間", "現在"]
+    reminder_keywords = ["提醒", "安排", "計畫", "行程", "時程", "預約", "有什麼事", "要做什麼"]
+    
+    has_time = any(keyword in text for keyword in time_keywords)
+    has_reminder = any(keyword in text for keyword in reminder_keywords)
+    
+    if has_time or has_reminder:
         return 5
-    if "在哪" in text or "哪裡" in text:
+    
+    # 物品查詢 - 增加更多關鍵詞
+    query_keywords = ["在哪", "哪裡", "看到", "找到", "記得", "有沒有看到", "知道", "放哪", "位置"]
+    item_keywords = ["眼鏡", "鑰匙", "手機", "錢包", "拐杖", "假牙", "藥", "書", "包包", "衣服", "鞋子"]
+    
+    # 檢查是否包含查詢關鍵詞 + 物品關鍵詞
+    has_query = any(keyword in text for keyword in query_keywords)
+    has_item = any(keyword in text for keyword in item_keywords)
+    
+    if has_query and has_item:
         return 4
-    if "提醒" in text or "要去" in text:
+    
+    # 如果只有查詢關鍵詞但沒有明確物品，也可能是物品查詢
+    if has_query:
+        return 4
+    
+    # 時程安排
+    schedule_keywords = ["要去", "明天", "後天", "下週", "下個月", "等等", "分鐘後", "小時後"]
+    if any(keyword in text for keyword in schedule_keywords):
         return 3
+        
+    # 物品記錄
     if "放在" in text or "存放" in text:
         return 2
+        
     return 1
 
 def parse_relative_time(text):
@@ -52,7 +79,7 @@ def parse_relative_time(text):
             pass
     now = datetime.now()
     chinese_num_map = {
-        '零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
+        '零': 0, '一': 1, '二': 2, '兩': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
         '十': 10, '十一': 11, '十二': 12, '十三': 13, '十四': 14, '十五': 15, '十六': 16, '十七': 17, '十八': 18, '十九': 19,
         '二十': 20, '三十': 30, '四十': 40, '五十': 50
     }
@@ -61,7 +88,16 @@ def parse_relative_time(text):
             text = text.replace(chinese, str(num))
         return text
     converted_text = convert_chinese_number(text)
-    min_match = re.search(r'(?:等等)?(\d{1,3})\s*分(?:鐘)?(?:後|钟後)(?!的时候|的時候)', converted_text)
+    
+    # 處理小時相對時間（例如：1小時後、兩個小時之後）
+    hour_match = re.search(r'(?:等等)?(\d{1,2})\s*(?:個)?小時(?:之?後|后)(?!的时候|的時候)', converted_text)
+    if hour_match and not any(word in text for word in ["今天", "明天", "後天", "大後天", "下週", "下個月"]) and not re.search(r'\d+[點:]\d+', converted_text):
+        hours = int(hour_match.group(1))
+        target_time = now + timedelta(hours=hours)
+        return target_time.strftime("%Y-%m-%d %H:%M")
+    
+    # 支持更多相對時間表達方式（分鐘）
+    min_match = re.search(r'(?:等等)?(\d{1,3})\s*分(?:鐘)?(?:之?後|钟後|后)(?!的时候|的時候)', converted_text)
     if not min_match:
         min_match = re.search(r'等等(\d{1,3})\s*分(?!鐘)(?!的时候|的時候)', converted_text)
     if min_match and not any(word in text for word in ["今天", "明天", "後天", "大後天", "下週", "下個月"]) and not re.search(r'\d+[點:]\d+', converted_text):
