@@ -1,3 +1,4 @@
+from fastapi import Depends
 from fastapi import APIRouter, Form, HTTPException
 from app.services.item_service import handle_item_input, handle_item_query
 from app.models.database import db  # db 物件
@@ -5,17 +6,18 @@ from app.utils.llm_utils import safe_generate  # safe_generate 工具
 from bson import ObjectId  # ✅ 匯入 ObjectId
 
 router = APIRouter(tags=["items"])  # 移除 prefix
+from app.services.auth_service import get_current_user, User
 
 # 新增物品
 @router.post("/")
-async def create_item(text: str = Form(...)):
+async def create_item(text: str = Form(...), current_user: User = Depends(get_current_user)):
     await handle_item_input(db, text, safe_generate)
     return {"msg": "物品已新增"}
 
 # 查詢物品清單
 @router.get("")
 @router.get("/")
-async def list_items(text: str = ""):
+async def list_items(text: str = "", current_user: User = Depends(get_current_user)):
     cursor = db.items.find()
     result = await cursor.limit(100).to_list(100)
 
@@ -33,7 +35,7 @@ async def list_items(text: str = ""):
 
 # 編輯物品
 @router.put("/{item_id}")
-async def update_item(item_id: str, name: str = Form(...), places: str = Form(...)):
+async def update_item(item_id: str, name: str = Form(...), places: str = Form(...), current_user: User = Depends(get_current_user)):
     import json
     try:
         places_list = json.loads(places) if isinstance(places, str) else places
@@ -52,7 +54,7 @@ async def update_item(item_id: str, name: str = Form(...), places: str = Form(..
 
 # 刪除物品
 @router.delete("/{item_id}")
-async def delete_item(item_id: str):
+async def delete_item(item_id: str, current_user: User = Depends(get_current_user)):
     try:
         oid = ObjectId(item_id)  # ✅ 將字串轉為 ObjectId
     except Exception:
