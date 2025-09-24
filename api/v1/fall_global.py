@@ -193,10 +193,10 @@ async def api_video_proxy():
     async def proxy_stream():
         # 根據樹莓派實際端點更新 URL
         stream_urls = [
-            'http://100.66.243.67/stream.mjpg',           # 原始串流
-            'http://100.66.243.67/stream_processed.mjpg', # 處理後串流
-            'http://100.66.243.67/video_feed',
-            'http://100.66.243.67/mjpg_stream',
+            'http://100.66.243.67:5000/stream_processed.mjpg', # 處理後串流（優先）
+            'http://100.66.243.67:5000/stream.mjpg',           # 原始串流（備用）
+            'http://100.66.243.67:5000/video_feed',
+            'http://100.66.243.67:5000/mjpg_stream',
         ]
         
         for url in stream_urls:
