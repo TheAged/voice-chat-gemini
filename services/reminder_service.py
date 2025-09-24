@@ -8,7 +8,8 @@ import json
 
 class ReminderService:
     def __init__(self):
-        self.tts = TTSService()
+        kebbi_endpoint = "http://kebbi_ip_or_domain:5000"  # TODO: 改成實際 endpoint 或從設定取得
+        self.tts = TTSService(kebbi_endpoint)
         self.is_running = False
         self.websocket_connections: List = []  # 儲存 WebSocket 連接
     
