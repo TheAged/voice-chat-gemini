@@ -129,8 +129,7 @@ class ReminderService:
             await save_chat_log(db, "[系統提醒]", message)
             
             # 只生成語音，不在伺服器端播放
-            tts = TTSService()
-            audio_bytes = await tts.synthesize_async(message)  # 只生成音頻
+            audio_bytes = await self.tts.synthesize_async(message)  # 只生成音頻
             logger.info(f"已生成提醒語音，音頻大小: {len(audio_bytes)} bytes")
             
             # 準備推送到前端的提醒數據（包含音頻）
