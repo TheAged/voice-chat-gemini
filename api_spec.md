@@ -36,6 +36,107 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ## 2. API 詳細規格
 
+### 2.x 認證與用戶（Auth & User）
+
+#### 登入
+- `POST /api/v1/auth/login`
+- 參數：`username`, `password`（form-data 或 JSON）
+- 回傳：
+  ```json
+  {"access_token": "<JWT token>", "token_type": "bearer"}
+  ```
+
+#### 取得用戶資訊
+- `GET /api/v1/auth/me`
+- 權限：需登入
+- 回傳：
+  ```json
+  {"id": "...", "username": "...", "line_user_id": "..."}
+  ```
+
+---
+
+### 2.x 語音上傳與辨識（Audio）
+
+#### 上傳語音檔
+- `POST /api/v1/audio/upload`
+- 參數：`file`（multipart/form-data）
+- 回傳：
+  ```json
+  {"audio_path": "uploads/xxx.wav"}
+  ```
+
+#### 語音轉文字（STT）
+- `POST /api/v1/audio/stt`
+- 參數：`audio_path`（string）
+- 回傳：
+  ```json
+  {"text": "辨識結果"}
+  ```
+
+---
+
+### 2.x 跌倒偵測（Fall Detection）
+
+#### 上報跌倒事件
+- `POST /api/v1/fall/`
+- 參數：`event_time`, `location`, `note`
+- 回傳：
+  ```json
+  {"msg": "跌倒事件已記錄"}
+  ```
+
+#### 查詢跌倒紀錄
+- `GET /api/v1/fall/`
+- 回傳：
+  ```json
+  {"result": [ {"_id": "...", "event_time": "...", "location": "..."} ]}
+  ```
+
+---
+
+### 2.x 提醒事項（Reminders）
+
+#### 新增提醒
+- `POST /api/v1/reminders/`
+- 參數：`text`, `time`
+- 回傳：
+  ```json
+  {"msg": "提醒已新增"}
+  ```
+
+#### 查詢提醒清單
+- `GET /api/v1/reminders/`
+- 回傳：
+  ```json
+  {"result": [ {"_id": "...", "text": "...", "time": "..."} ]}
+  ```
+
+#### 刪除提醒
+- `DELETE /api/v1/reminders/{reminder_id}`
+- 回傳：
+  ```json
+  {"msg": "提醒已刪除"}
+  ```
+
+---
+
+### 2.x Webhooks & LINE Bot
+
+#### LINE Webhook 入口
+- `POST /api/v1/webhooks/line`
+- 參數：LINE 官方推送格式
+- 回傳：
+  ```json
+  {"msg": "ok"}
+  ```
+
+#### 其他 Webhook
+- `POST /api/v1/webhooks/xxx`
+- 依需求設計
+
+---
+
 ### 2.1 物品管理（Items）
 
 #### 資料欄位
@@ -51,6 +152,40 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 - `POST /api/v1/items/`
 - 參數：`text` (form-data)
 - 權限：需登入
+### 2.0 聊天互動（Chat）
+
+#### 資料欄位
+| 欄位         | 型別   | 說明         |
+|--------------|--------|--------------|
+| text         | string | 使用者輸入文字 |
+| audio_path   | string | 語音檔案路徑（可選） |
+
+#### 聊天互動
+- `POST /api/v1/chat/`
+- 參數：
+  - `text` (string, 必填)
+  - `audio_path` (string, 選填)
+- 權限：需登入
+- 範例請求：
+  ```json
+  {
+    "text": "你好，幫我查詢明天的行程",
+    "audio_path": null
+  }
+  ```
+- 回傳範例：
+  ```json
+  {
+    "reply": "明天上午10點有看醫生行程。",
+    "emotion": "中性",
+    "modalities_used": ["文字"],
+    "text_emotion": "中性",
+    "audio_emotion": "中性",
+    "facial_emotion": null
+  }
+  ```
+
+---
 - 範例請求：
   ```
   curl -X POST -F "text=牙刷" -H "Authorization: Bearer <token>" /api/v1/items/
@@ -72,6 +207,12 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 - 僅回傳該 user_id 的物品
 
 #### 編輯物品
+  # 聊天互動
+  curl -X POST \
+    -H "Authorization: Bearer <token>" \
+    -H "Content-Type: application/json" \
+    -d '{"text": "你好，幫我查詢明天的行程"}' \
+    http://localhost:8000/api/v1/chat/
 - `PUT /api/v1/items/{item_id}`
 - 參數：`name`, `places` (form-data)
 - 權限：需登入
@@ -110,6 +251,43 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 - 權限：需登入
 - 回傳：
   ```json
+    /api/v1/chat/:
+      post:
+        summary: 聊天互動
+        requestBody:
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text:
+                    type: string
+                  audio_path:
+                    type: string
+        responses:
+          '200':
+            description: 成功
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    reply:
+                      type: string
+                    emotion:
+                      type: string
+                    modalities_used:
+                      type: array
+                      items:
+                        type: string
+                    text_emotion:
+                      type: string
+                    audio_emotion:
+                      type: string
+                    facial_emotion:
+                      type: string
+        security:
+          - bearerAuth: []
   {"result": [
     {"_id": "...", "name": "看醫生", "time": "2025-09-24 10:00", ...}
   ]}
