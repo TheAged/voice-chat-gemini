@@ -552,8 +552,8 @@ class ComprehensiveFallManager:
             logger.info(f"音訊客戶端斷線: {addr}")
     
     def update_fall_status(self, is_fall: bool, confidence: float = 0.0, 
-                           location: str = "監控區域", source: str = "AI_DETECTION"):
-        """更新跌倒狀態"""
+                           location: str = "監控區域", source: str = "AI_DETECTION", device_id: str = None):
+        """更新跌倒狀態，並將跌倒事件交由 service 層處理"""
         with self._lock:
             current_time = int(time.time())
             status_changed = self.current_status["fall"] != is_fall
@@ -575,11 +575,13 @@ class ComprehensiveFallManager:
                 if len(self.history_records) > self.max_history:
                     self.history_records = self.history_records[:self.max_history]
 
-                # 偵測到跌倒：觸發外部 fall_detection_service 的 async 流程（若有）
+                # 偵測到跌倒：統一交由 service 層處理
                 if is_fall and fall_detection_service is not None:
                     try:
-                        _fire_and_forget_coro(fall_detection_service._handle_fall_detected())
-                        logger.info("已自動觸發 fall_detection_service 的跌倒處理流程")
+                        # device_id 若未指定則用全域 DEVICE_ID
+                        did = device_id or DEVICE_ID
+                        _fire_and_forget_coro(fall_detection_service.handle_fall_event(did, confidence, current_time))
+                        logger.info("已自動觸發 fall_detection_service.handle_fall_event 處理跌倒事件")
                     except Exception as e:
                         logger.error(f"自動呼叫 fall_detection_service 失敗: {e}")
 
