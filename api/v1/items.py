@@ -14,11 +14,12 @@ async def create_item(text: str = Form(...), current_user: User = Depends(get_cu
     await handle_item_input(db, text, safe_generate)
     return {"msg": "物品已新增"}
 
-# 查詢物品清單
+
+# 查詢物品清單，只查自己的
 @router.get("")
 @router.get("/")
 async def list_items(text: str = "", current_user: User = Depends(get_current_user)):
-    cursor = db.items.find()
+    cursor = db.items.find({"user_id": str(current_user.id)})
     result = await cursor.limit(100).to_list(100)
 
     def safe_objid(obj):

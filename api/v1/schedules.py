@@ -1,5 +1,5 @@
 from fastapi import Depends
-from fastapi import APIRouter, Form
+from fastapi import APIRouter, Form, HTTPException
 from app.services.schedule_service import handle_schedule_input
 from app.models.database import db
 from app.utils.llm_utils import safe_generate
@@ -10,9 +10,12 @@ from bson import ObjectId
 router = APIRouter(tags=["schedules"])
 from app.services.auth_service import get_current_user, User
 
-@router.post("/") #新增行程
+
+
+# 新增行程，寫入時帶 user_id
+@router.post("/")
 async def create_schedule(text: str = Form(...), current_user: User = Depends(get_current_user)):
-    await handle_schedule_input(db, text, parse_relative_time, safe_generate)
+    await handle_schedule_input(db, text, parse_relative_time, safe_generate, user_id=str(current_user.id))
     return {"msg": "行程已新增"}
 
 @router.get("/reminders") #查詢目前要提醒的行程
@@ -33,11 +36,12 @@ def fix_objid(obj):
         return str(obj)
     return obj
 
+
+# 查詢行程，只查自己的
 @router.get("/")
 async def get_schedules(current_user: User = Depends(get_current_user)):
-    schedules = await db.schedules.find().to_list(100)
+    schedules = await db.schedules.find({"user_id": str(current_user.id)}).to_list(100)
     schedules = [fix_objid(s) for s in schedules]
-    # 只回傳統一欄位
     return {"schedules": [
         {
             "id": s.get("_id"),

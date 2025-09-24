@@ -24,6 +24,17 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 import requests
 
+<<<<<<< HEAD
+=======
+# 匯入 fall_detection_service
+try:
+    from services.fall_detection_service import fall_detection_service
+    import asyncio
+except ImportError:
+    fall_detection_service = None
+    asyncio = None
+
+>>>>>>> 8049940 (Initial commit)
 # ===== 配置和常量 =====
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -608,10 +619,17 @@ class ComprehensiveFallManager:
         with self._lock:
             current_time = int(time.time())
             status_changed = self.current_status["fall"] != is_fall
+<<<<<<< HEAD
             
             if status_changed:
                 logger.info(f"狀態變化: {'跌倒' if is_fall else '正常'} (信心度: {confidence:.2f})")
                 
+=======
+
+            if status_changed:
+                logger.info(f"狀態變化: {'跌倒' if is_fall else '正常'} (信心度: {confidence:.2f})")
+
+>>>>>>> 8049940 (Initial commit)
                 # 添加歷史記錄
                 history_entry = {
                     "fall": is_fall,
@@ -623,11 +641,28 @@ class ComprehensiveFallManager:
                     "source": source,
                     "id": f"{current_time}-{is_fall}-{random.randint(1000,9999)}"
                 }
+<<<<<<< HEAD
                 
                 self.history_records.insert(0, history_entry)
                 if len(self.history_records) > self.max_history:
                     self.history_records = self.history_records[:self.max_history]
             
+=======
+
+                self.history_records.insert(0, history_entry)
+                if len(self.history_records) > self.max_history:
+                    self.history_records = self.history_records[:self.max_history]
+
+                # === 新增：偵測到跌倒時自動呼叫 fall_detection_service 的 async 處理 ===
+                if is_fall and fall_detection_service and asyncio:
+                    try:
+                        # 避免阻塞主執行緒，使用 asyncio.create_task
+                        asyncio.create_task(fall_detection_service._handle_fall_detected())
+                        logger.info("已自動觸發 fall_detection_service 的跌倒處理流程")
+                    except Exception as e:
+                        logger.error(f"自動呼叫 fall_detection_service 失敗: {e}")
+
+>>>>>>> 8049940 (Initial commit)
             # 更新當前狀態
             self.current_status.update({
                 "fall": is_fall,
@@ -638,7 +673,11 @@ class ComprehensiveFallManager:
                 "location": location,
                 "source": source
             })
+<<<<<<< HEAD
             
+=======
+
+>>>>>>> 8049940 (Initial commit)
             return status_changed
     
     def _generate_status_message(self, is_fall: bool, confidence: float, source: str) -> str:

@@ -5,7 +5,20 @@ import cv2
 import numpy as np
 from collections import deque
 from typing import Optional
+<<<<<<< HEAD
 from app.utils.logger import logger
+=======
+
+from app.utils.logger import logger
+from services.notify_service import send_line_notify
+from models.schemas import User  # 用 beanie ODM 查User
+
+
+# 查詢User表取得kebbi_endpoint與line_user_id
+async def get_user_by_device(device_id: str) -> User:
+    # 假設User有device_id欄位，否則請根據實際邏輯查詢
+    return await User.find_one(User.device_id == device_id)
+>>>>>>> 8049940 (Initial commit)
 
 # 跌倒偵測與警報相關服務
 
@@ -21,6 +34,7 @@ current_fall_status = {
 
 class FallDetectionService:
     def __init__(self):
+<<<<<<< HEAD
         self.latest_frame = None
         self.fall_history = deque(maxlen=100)
         self.is_running = False
@@ -138,6 +152,57 @@ class FallDetectionService:
             
             # 觸發跌倒處理流程
             asyncio.create_task(self._handle_fall_detected())
+=======
+        self.fall_history = deque(maxlen=100)
+
+    async def handle_fall_event(self, device_id: str, confidence: float = 0.9, timestamp: float = None):
+        """
+        由 fall.py 偵測到跌倒時呼叫，處理後續（通知凱比、詢問用戶、通知家屬）
+        """
+        global current_fall_status, fall_warning
+        if timestamp is None:
+            timestamp = time.time()
+        user = await get_user_by_device(device_id)
+        if not user:
+            logger.error(f"找不到對應 user (device_id: {device_id})")
+            return
+        old_status = current_fall_status["fall"]
+        current_fall_status.update({
+            "fall": True,
+            "ts": int(timestamp),
+            "status_msg": f"偵測到跌倒！(device: {device_id})"
+        })
+        fall_warning = "Fall Detected!"
+        if not old_status:
+            current_fall_status["total_falls"] += 1
+            self.fall_history.append({
+                "timestamp": timestamp,
+                "confidence": confidence,
+                "device_id": device_id
+            })
+            logger.warning(f"偵測到跌倒事件！總計: {current_fall_status['total_falls']} (device: {device_id})")
+            # 呼叫對應凱比 API
+            try:
+                kebbi_api_url = user.kebbi_endpoint
+                payload = {
+                    "event": "fall_detected",
+                    "confidence": confidence,
+                    "timestamp": int(timestamp)
+                }
+                import requests
+                requests.post(kebbi_api_url, json=payload, timeout=2)
+                logger.info(f"已通知凱比機器人端跌倒事件 (device: {device_id})")
+            except Exception as e:
+                logger.error(f"通知凱比機器人端失敗: {e}")
+            # 觸發跌倒處理流程，傳入 device_id
+            asyncio.create_task(self._handle_fall_detected(device_id))
+
+    async def _handle_fall_detected(self, device_id: str):
+        try:
+            await handle_fall_event_async(device_id)
+        except Exception as e:
+            logger.error(f"跌倒事件處理失敗: {e}")
+>>>>>>> 8049940 (Initial commit)
     
     def _update_status_msg(self, msg: str):
         """更新狀態訊息"""
@@ -162,6 +227,7 @@ def set_user_response(response_text: str):
     current_fall_status["user_response"] = response_text
     logger.info(f"收到用戶回應: {response_text}")
 
+<<<<<<< HEAD
 def process_frame(frame):
     """處理單幀影像（兼容性函數）"""
     if fall_detection_service.detection_available and frame is not None:
@@ -182,11 +248,20 @@ def update_fall_status(is_fall: bool):
         current_fall_status["total_falls"] += 1
         # 觸發跌倒處理
         asyncio.create_task(handle_fall_event_async())
+=======
+
+
+
+>>>>>>> 8049940 (Initial commit)
 
 def call_emergency_contact():
     """呼叫緊急聯絡人"""
     logger.warning("觸發緊急聯絡！")
+<<<<<<< HEAD
     # 這裡可以整合簡訊、電話或推送通知
+=======
+    send_line_notify("⚠️ 偵測到跌倒事件，請盡速確認！")
+>>>>>>> 8049940 (Initial commit)
 
 def stop_alarm():
     """關閉警報"""
@@ -237,11 +312,16 @@ async def ask_if_ok():
         logger.error(f"跌倒詢問處理失敗: {e}")
         return None
 
+<<<<<<< HEAD
 async def handle_fall_event_async():
+=======
+async def handle_fall_event_async(device_id: str):
+>>>>>>> 8049940 (Initial commit)
     """
     跌倒事件的完整處理流程
     """
     try:
+<<<<<<< HEAD
         logger.warning("開始處理跌倒事件")
         
         # 1. 詢問用戶狀態
@@ -281,6 +361,46 @@ def handle_fall_event():
     同步版本的跌倒事件處理（向後兼容）
     """
     asyncio.create_task(handle_fall_event_async())
+=======
+        logger.warning(f"開始處理跌倒事件 (device: {device_id})")
+        user = await get_user_by_device(device_id)
+        if not user:
+            logger.error(f"找不到對應 user (device_id: {device_id})")
+            return
+        # 1. 詢問用戶狀態
+        reply = await ask_if_ok()
+        # 2. 分析回應
+        danger_keywords = ["不太行", "站不起來", "救命", "幫忙", "痛", "無法起來", "不好", "受傷"]
+        safe_keywords = ["沒事", "還好", "沒問題", "好的", "安全", "我站得起來"]
+
+        if not reply:
+            logger.warning("用戶沒有回應，自動通知家屬")
+            send_line_notify(f"⚠️ 偵測到跌倒事件，請盡速確認！(device: {device_id})", user_id=user.line_user_id)
+        elif any(word in reply for word in danger_keywords):
+            logger.error("用戶表示需要幫助，觸發緊急聯絡")
+            send_line_notify(f"⚠️ 用戶需要協助：{reply} (device: {device_id})", user_id=user.line_user_id)
+        elif any(word in reply for word in safe_keywords):
+            # 用戶表示安全，跌倒事件結束，回到聊天
+            try:
+                from app.services.tts_service import TTSService
+                tts = TTSService()
+                comfort_msg = "沒事就好，要小心一點喔。我們繼續聊天吧。"
+                await tts.synthesize_and_play(comfort_msg)
+            except Exception as e:
+                logger.error(f"TTS 播報失敗: {e}")
+            # 呼叫聊天服務繼續互動
+            try:
+                from services.chat_service import continue_chat_after_fall
+                continue_chat_after_fall()
+                logger.info("已自動回歸聊天模式")
+            except Exception as e:
+                logger.error(f"回歸聊天模式失敗: {e}")
+        else:
+            # 回應不明確，再次確認
+            logger.warning("用戶回應不明確，需要進一步確認")
+    except Exception as e:
+        logger.error(f"handle_fall_event_async 發生例外: {e}")
+>>>>>>> 8049940 (Initial commit)
 
 def stop_alarm():
     # 關閉警報

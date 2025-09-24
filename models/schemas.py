@@ -9,6 +9,11 @@ class User(Document):
     name: str
     phone: Optional[str] = None
     role: str = "user"
+<<<<<<< HEAD
+=======
+    kebbi_endpoint: Optional[str] = None  # 凱比 API endpoint
+    line_user_id: Optional[str] = None    # 家屬 LINE user id
+>>>>>>> 8049940 (Initial commit)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: Optional[datetime] = None
 

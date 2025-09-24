@@ -6,14 +6,24 @@ import asyncio
 import tempfile, os
 import subprocess
 import platform
+<<<<<<< HEAD
 
 class TTSService:
     def __init__(self, voice: str = "zh-TW-HsiaoChenNeural", rate: str = "+0%", pitch: str = "+16Hz"):
+=======
+import requests
+import base64
+
+class TTSService:
+    def __init__(self, kebbi_endpoint: str, voice: str = "zh-TW-HsiaoChenNeural", rate: str = "+0%", pitch: str = "+16Hz"):
+        self.kebbi_endpoint = kebbi_endpoint  # 例如 http://kebbi.local:5000/tts
+>>>>>>> 8049940 (Initial commit)
         self.voice = voice
         self.rate = rate
         self.pitch = pitch
 
     async def synthesize_async(self, text: str) -> bytes:
+<<<<<<< HEAD
         communicate = edge_tts.Communicate(text, self.voice, rate=self.rate, pitch=self.pitch)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
             tmp_path = tmp.name
@@ -75,3 +85,21 @@ class TTSService:
         except Exception as e:
             print(f"播放音頻失敗: {e}")
            
+=======
+        # 假設凱比API支援 POST /tts，回傳 {"audio_base64": "..."}
+        resp = requests.post(
+            f"{self.kebbi_endpoint}/tts",
+            json={"text": text},
+            timeout=5
+        )
+        resp.raise_for_status()
+        audio_base64 = resp.json().get("audio_base64")
+        return base64.b64decode(audio_base64) if audio_base64 else b""
+
+    def synthesize(self, text: str) -> bytes:
+        # 同步版本
+        return asyncio.run(self.synthesize_async(text))
+    
+    # 已移除本地播放與重複定義，TTS 只負責呼叫凱比API產生語音
+
+>>>>>>> 8049940 (Initial commit)
