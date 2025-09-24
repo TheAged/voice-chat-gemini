@@ -192,4 +192,57 @@ A: 需重新登入取得新 token。
 A: 只要帶入 JWT token，API 會自動識別 user_id，資料不會混用。
 
 ---
-如需串接範例、Swagger 文件或有其他 API 需求，請聯絡後端工程師。
+## 6. API 串接範例
+
+### 6.1 curl 範例
+```bash
+# 新增物品
+curl -X POST \
+  -F "text=牙刷" \
+  -H "Authorization: Bearer <token>" \
+  http://localhost:8000/api/v1/items/
+
+# 查詢行程
+curl -H "Authorization: Bearer <token>" \
+  http://localhost:8000/api/v1/schedules/
+```
+
+### 6.2 JavaScript fetch 範例
+```js
+// 查詢情緒清單
+fetch('http://localhost:8000/api/v1/emotions/', {
+  headers: { 'Authorization': 'Bearer <token>' }
+})
+  .then(res => res.json())
+  .then(data => console.log(data));
+```
+
+### 6.3 Swagger (OpenAPI) 片段
+```yaml
+paths:
+  /api/v1/items/:
+    post:
+      summary: 新增物品
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  msg:
+                    type: string
+      security:
+        - bearerAuth: []
+```
+
+如需更多串接範例、Swagger 文件或有其他 API 需求，請聯絡後端工程師。
