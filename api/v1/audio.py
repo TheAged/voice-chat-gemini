@@ -21,5 +21,3 @@ async def api_transcribe(file: UploadFile = File(...)):
     audio_bytes = await file.read()
     result = stt.transcribe(audio_bytes)
     return JSONResponse({"text": result})
-
-
